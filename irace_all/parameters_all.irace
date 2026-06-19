@@ -1,0 +1,67 @@
+# ============================================================================
+# IRACE parameter file — competencia unificada entre 5 metaheurísticas BAO
+# (ILS, Tabu fijo/adaptativo, GVNS, Iterated Greedy, Simulated Annealing)
+# sobre MEDIUM_test K=3/K=4.
+#
+# "algoritmo" es el parámetro categórico raíz: irace explora y compite entre
+# las 5 ramas directamente (no solo entre configs de un mismo algoritmo).
+# Cada rama activa solo los sub-parámetros que su grammar CLI necesita
+# (ver imrt_builder.cpp / generalParser.cpp para el orden exacto de tokens).
+#
+# SA reutiliza infraestructura ya existente en el framework, sin código nuevo:
+#   ils nols <init> tmaxiter <sa_outer_iter> prangswap 1 \
+#       saacc <start> <end> <beta> <interval> <alpha> rnds <seed>
+# - "nols <init>" -> emili::EmptyLocalSearch (LS interno vacío, ya soportado)
+# - "saacc s e b i a" -> emili::Metropolis(s,e,b,i,a), criterio de aceptación
+#   con enfriamiento temperature = alpha*temperature - beta cada "i" pasos,
+#   hasta llegar a "e". Token ya implementado en generalParser.cpp (genérico,
+#   no específico de IMRT/BAO) — no hizo falta escribir ninguna clase nueva.
+# ============================================================================
+
+# ── Algoritmo a competir ───────────────────────────────────────────────────
+algoritmo      "--algoritmo "      c  (ils, tabu, vns, greedy, sa)
+
+# ── Compartidos: todas las ramas usan explore mode + init para su LS interno ─
+inner_explore  "--inner_explore "  c  (best, first)
+inner_init     "--inner_init "     c  (ifirstk, irandomk)
+
+# ── Iteraciones del LS interno (ils, greedy y vns tienen un LS embebido) ────
+inner_iter     "--inner_iter "     i  (1, 3)              | algoritmo %in% c("ils", "greedy", "vns")
+
+# ── Reinicios del bucle externo (solo ils/greedy tienen perturbación+reinicio) ─
+outer_iter     "--outer_iter "     i  (1, 5)              | algoritmo %in% c("ils", "greedy")
+
+# ── ILS: swaps aleatorios de la perturbación ─────────────────────────────────
+pert_swaps     "--pert_swaps "     i  (1, 2)              | algoritmo == "ils"
+
+# ── Greedy: tamaño de destrucción/reconstrucción (acotado a K=3 mínimo) ──────
+greedy_d       "--greedy_d "       i  (1, 3)              | algoritmo == "greedy"
+
+# ── Tabu: tipo de memoria + iteraciones totales ──────────────────────────────
+tabu_type      "--tabu_type "      c  (fixed, adaptive)   | algoritmo == "tabu"
+tenure         "--tenure "         i  (2, 8)              | algoritmo == "tabu" & tabu_type == "fixed"
+tenure_min     "--tenure_min "     i  (1, 4)              | algoritmo == "tabu" & tabu_type == "adaptive"
+tenure_max     "--tenure_max "     i  (5, 12)             | algoritmo == "tabu" & tabu_type == "adaptive"
+max_iter       "--max_iter "       i  (5, 30)             | algoritmo == "tabu"
+
+# ── VNS: amplitud máxima del shake + reinicios externos ──────────────────────
+p_max          "--p_max "          i  (1, 4)              | algoritmo == "vns"
+vns_outer      "--vns_outer "      i  (1, 5)              | algoritmo == "vns"
+
+# ── SA: enfriamiento Metropolis (emili::Metropolis, ya genérico en el framework) ─
+sa_outer_iter  "--sa_outer_iter "  i  (50, 400)           | algoritmo == "sa"
+sa_start_temp  "--sa_start_temp "  r  (5, 50)             | algoritmo == "sa"
+sa_end_temp    "--sa_end_temp "    r  (0.01, 1)           | algoritmo == "sa"
+sa_beta        "--sa_beta "        r  (0.1, 3)            | algoritmo == "sa"
+sa_interval    "--sa_interval "    i  (1, 10)             | algoritmo == "sa"
+sa_alpha       "--sa_alpha "       r  (0.85, 1.0)         | algoritmo == "sa"
+
+# ── Pesos de la función objetivo FMO (comunes a todos los algoritmos) ────────
+# w_under: penalización por subdosis en PTV. Rango logarítmico porque
+#          la diferencia entre 1 y 1000 cambia órdenes de magnitud.
+w_under        "--w_under "        r,log  (1.0, 1000.0)
+# w_over: penalización por sobredosis en OAR. Controla el trade-off
+#         entre cobertura PTV y sparing de órganos sanos.
+w_over         "--w_over "         r,log  (0.01, 10.0)
+# w_ptv_over: penalización por hot-spots en PTV (>107% Rx).
+w_ptv_over     "--w_ptv_over "     r,log  (0.1, 50.0)

@@ -1,0 +1,41 @@
+# ============================================================================
+# IRACE scenario — BAO PROSTATE real, K=4 ángulos (máximo clínico)
+#
+# Instancias: 2 submuestreos independientes de PROSTATE_36ang (2554 vóxeles c/u)
+#   PROSTATE_sampled_K4  (seed=2024): C(36,4)=58905 subconjuntos
+#   PROSTATE_sampled2_K4 (seed=7777): C(36,4)=58905 subconjuntos
+#
+# Calibración: ~6s/run (min: best,outer=1) a ~274s (max: best,outer=3)
+# Presupuesto: 15000s CPU / parallel=4 → ~62 min pared, ~65-2500 runs
+#
+# Punto de partida: config ganadora de irace_medium
+# ============================================================================
+
+targetRunner         = "/Users/marrojasr/Documents/code/emili_imrt/irace_prostate/target-runner"
+trainInstancesFile   = "/Users/marrojasr/Documents/code/emili_imrt/irace_prostate/instances.txt"
+parameterFile        = "/Users/marrojasr/Documents/code/emili_imrt/irace_prostate/parameters.irace"
+logFile              = "/Users/marrojasr/Documents/code/emili_imrt/irace_prostate/results/irace.log"
+
+# ── Presupuesto ───────────────────────────────────────────────────────────────
+# Con max_intensity=15000, tiempos reales medidos:
+#   first+outer=1: ~120s | first+outer=2: ~300s | first+outer=3: ~700s
+#   best+outer=1:  ~3840s (128 vecinos × 30s/OSQP)
+# maxTime=20000s CPU / 4 cores → ~83 min pared, ~50-150 runs con first
+maxTime              = 20000
+
+# Timeout por run: 1500s (aumentado de 800s; runs con best+outer=2 tardaban ~820s)
+targetRunnerTimeout  = 1500
+
+# ── Paralelismo ───────────────────────────────────────────────────────────────
+parallel             = 4
+
+# ── Config inicial (ganadora de irace_medium) ─────────────────────────────────
+configurationsFile   = "/Users/marrojasr/Documents/code/emili_imrt/irace_prostate/init_config.txt"
+
+# ── Semilla y output ──────────────────────────────────────────────────────────
+seed                 = 42
+debugLevel           = 1
+
+# ── Tests estadísticos ────────────────────────────────────────────────────────
+firstTest            = 2
+testType             = "t-test"

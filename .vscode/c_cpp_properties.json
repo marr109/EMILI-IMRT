@@ -1,0 +1,39 @@
+{
+  // VS Code C/C++ (ms-vscode.cpptools) IntelliSense configuration.
+  //
+  // If you see: could not open source file "string" (no directories in search list)
+  // it almost always means no C++ toolchain is configured.
+  //
+  // Fix:
+  // 1) Install ONE toolchain (recommended on Windows: MSVC Build Tools OR MSYS2/MinGW-w64).
+  // 2) Set `compilerPath` below to the full path of your compiler (or ensure `cl.exe` is on PATH).
+  // 3) Reload VS Code.
+  //
+  // Optional (best): configure this project with CMake and point IntelliSense to compile_commands.json:
+  // - Create `build/` and run `cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON`
+  // - Then set `"compileCommands": "${workspaceFolder}/build/compile_commands.json"`
+  "version": 4,
+  "configurations": [
+    {
+      "name": "Windows (MSVC)",
+      "compilerPath": "cl.exe",
+      "intelliSenseMode": "windows-msvc-x64",
+      "cStandard": "c11",
+      "cppStandard": "c++11",
+      "includePath": [
+        "${workspaceFolder}/**"
+      ]
+    },
+    {
+      "name": "Windows (MSYS2 MinGW-w64 UCRT64)",
+      "compilerPath": "C:/msys64/ucrt64/bin/g++.exe",
+      "intelliSenseMode": "windows-gcc-x64",
+      "cStandard": "c11",
+      "cppStandard": "c++11",
+      "includePath": [
+        "${workspaceFolder}/**"
+      ]
+    }
+  ]
+}
+

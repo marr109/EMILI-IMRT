@@ -1,0 +1,6 @@
+{
+  // Optional: if you use the CMake Tools extension, these settings will generate
+  // `build/compile_commands.json` (when CMake is installed) for accurate IntelliSense.
+  "cmake.buildDirectory": "${workspaceFolder}/build",
+  "cmake.exportCompileCommands": true
+}

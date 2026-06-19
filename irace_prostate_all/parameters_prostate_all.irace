@@ -1,0 +1,34 @@
+# ============================================================================
+# IRACE parameter file — competencia ILS vs rVNS sobre PROSTATE_sampled K=4
+#
+# Con max_intensity=15000 cada llamada OSQP tarda ~30s en PROSTATE_sampled.
+# "best" improvement (128 vecinos × 30s = 3840s/iteración) es inviable para
+# calibración; solo "first" improvement es práctico.
+# Budget: 20000s CPU / 4 cores ≈ 1.5h de pared, ~57 runs promedio.
+# ============================================================================
+
+# ── Algoritmo a competir ───────────────────────────────────────────────────
+algoritmo      "--algoritmo "      c  (ils, vns)
+
+# ── Inicialización de la solución ─────────────────────────────────────────
+inner_init     "--inner_init "     c  (ifirstk, irandomk)
+
+# ── Iteraciones del LS interno (first-improvement, fijado en target-runner) ─
+# Máx inner×outer ≈ 4 unidades × 120s/unidad = 480s < timeout 600s
+inner_iter     "--inner_iter "     i  (1, 2)    | algoritmo %in% c("ils", "vns")
+
+# ── ILS: reinicios externos + número de swaps de la perturbación ──────────
+outer_iter     "--outer_iter "     i  (1, 2)    | algoritmo == "ils"
+pert_swaps     "--pert_swaps "     i  (1, 2)    | algoritmo == "ils"
+
+# ── rVNS: amplitud máxima del shake + reinicios externos ─────────────────
+p_max          "--p_max "          i  (1, 2)    | algoritmo == "vns"
+vns_outer      "--vns_outer "      i  (1, 2)    | algoritmo == "vns"
+
+# ── Pesos de la función objetivo FMO (comunes a ambos algoritmos) ──────────
+# w_under: penalización por subdosis en PTV. Mayor → fuerza cobertura V95%.
+w_under        "--w_under "        r,log  (1.0, 1000.0)
+# w_over: penalización por sobredosis en OAR.
+w_over         "--w_over "         r,log  (0.01, 10.0)
+# w_ptv_over: penalización por hot-spots en PTV (>107% Rx).
+w_ptv_over     "--w_ptv_over "     r,log  (0.1, 50.0)

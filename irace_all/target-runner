@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# =============================================================================
+# target-runner — wrapper IRACE unificado: compite ILS / Tabu / GVNS / Greedy / SA
+# Instancia: MEDIUM_test (K=3 y K=4)
+# Salida: "costo tiempo" (requerido cuando IRACE usa maxTime)
+#
+# Parámetros tuneables vía IRACE:
+#   --algoritmo      {ils,tabu,vns,greedy,sa}
+#   --inner_explore  {best,first}
+#   --inner_init     {ifirstk,irandomk}
+#   --inner_iter     {1..3}
+#   --outer_iter     {1..5}
+#   --pert_swaps     {1,2}
+#   --greedy_d       {1..3}
+#   --tabu_type      {fixed,adaptive}
+#   --tenure         {2..8}
+#   --tenure_min     {1..4}
+#   --tenure_max     {5..12}
+#   --max_iter       {5..30}
+#   --p_max          {1..4}
+#   --vns_outer      {1..5}
+#   --sa_outer_iter  {50..400}
+#   --sa_start_temp  {5..50}
+#   --sa_end_temp    {0.01..1}
+#   --sa_beta        {0.1..3}
+#   --sa_interval    {1..10}
+#   --sa_alpha       {0.85..1.0}
+#   --w_under        [1..1000]        peso penalización subdosis PTV
+#   --w_over         [0.01..10]       peso penalización sobredosis OAR
+#   --w_ptv_over     [0.1..50]        peso penalización sobredosis PTV
+# =============================================================================
+set -euo pipefail
+
+EMILI="$(cd "$(dirname "$0")/.." && pwd)/build/emili"
+
+CONFIG_ID=$1; shift
+INSTANCE_ID=$1; shift
+SEED=$1; shift
+INSTANCE=$1; shift
+
+# Defaults
+algoritmo="ils"
+inner_explore="best"
+inner_init="irandomk"
+inner_iter=2
+outer_iter=2
+pert_swaps=1
+greedy_d=1
+tabu_type="fixed"
+tenure=4
+tenure_min=2
+tenure_max=8
+max_iter=10
+p_max=2
+vns_outer=2
+sa_outer_iter=200
+sa_start_temp=10
+sa_end_temp=0.1
+sa_beta=0.95
+sa_interval=5
+sa_alpha=1.0
+w_under=1.0
+w_over=0.5
+w_ptv_over=0.5
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --algoritmo)     algoritmo="$2";     shift 2 ;;
+        --inner_explore) inner_explore="$2"; shift 2 ;;
+        --inner_init)    inner_init="$2";    shift 2 ;;
+        --inner_iter)    inner_iter="$2";    shift 2 ;;
+        --outer_iter)    outer_iter="$2";    shift 2 ;;
+        --pert_swaps)    pert_swaps="$2";    shift 2 ;;
+        --greedy_d)      greedy_d="$2";      shift 2 ;;
+        --tabu_type)     tabu_type="$2";     shift 2 ;;
+        --tenure)        tenure="$2";        shift 2 ;;
+        --tenure_min)    tenure_min="$2";    shift 2 ;;
+        --tenure_max)    tenure_max="$2";    shift 2 ;;
+        --max_iter)      max_iter="$2";      shift 2 ;;
+        --p_max)         p_max="$2";         shift 2 ;;
+        --vns_outer)     vns_outer="$2";     shift 2 ;;
+        --sa_outer_iter) sa_outer_iter="$2"; shift 2 ;;
+        --sa_start_temp) sa_start_temp="$2"; shift 2 ;;
+        --sa_end_temp)   sa_end_temp="$2";   shift 2 ;;
+        --sa_beta)       sa_beta="$2";       shift 2 ;;
+        --sa_interval)   sa_interval="$2";   shift 2 ;;
+        --sa_alpha)      sa_alpha="$2";      shift 2 ;;
+        --w_under)       w_under="$2";       shift 2 ;;
+        --w_over)        w_over="$2";        shift 2 ;;
+        --w_ptv_over)    w_ptv_over="$2";    shift 2 ;;
+        *) shift ;;
+    esac
+done
+
+# Extraer K desde el nombre de la instancia (MEDIUM_test_K3 → K=3)
+BASENAME=$(basename "$INSTANCE")
+K=$(echo "$BASENAME" | sed 's/.*_K//')
+[[ "$K" =~ ^[0-9]+$ ]] || K=3
+
+# ── Crear instancia temporal con pesos tuneados ──
+TEMP_INST=$(mktemp -d)
+cleanup() { rm -rf "$TEMP_INST"; }
+trap 'cleanup; ELAPSED=$(( $(date +%s) - START_TIME )); echo "1e30 $ELAPSED"; exit 0' TERM INT
+trap 'cleanup' EXIT
+
+for f in "$INSTANCE"/*; do
+    fname=$(basename "$f")
+    if [ "$fname" != "instance_config.txt" ]; then
+        ln -s "$f" "$TEMP_INST/$fname"
+    fi
+done
+
+cp "$INSTANCE/instance_config.txt" "$TEMP_INST/instance_config.txt"
+sed -i '' "s/^w_under[[:space:]].*/w_under       $w_under/"     "$TEMP_INST/instance_config.txt"
+sed -i '' "s/^w_over[[:space:]].*/w_over        $w_over/"       "$TEMP_INST/instance_config.txt"
+sed -i '' "s/^w_ptv_over[[:space:]].*/w_ptv_over    $w_ptv_over/"   "$TEMP_INST/instance_config.txt"
+
+# Ensamblar tokens propios de cada algoritmo (ver imrt_builder.cpp / generalParser.cpp)
+case "$algoritmo" in
+    ils)
+        ARGS=(ils "$inner_explore" "$inner_init" tmaxiter "$inner_iter" nangswap \
+              tmaxiter "$outer_iter" prangswap "$pert_swaps" improve)
+        ;;
+    greedy)
+        ARGS=(ils "$inner_explore" "$inner_init" tmaxiter "$inner_iter" nangswap \
+              tmaxiter "$outer_iter" pgreedy "$greedy_d" improve)
+        ;;
+    tabu)
+        if [[ "$tabu_type" == "adaptive" ]]; then
+            ARGS=(tabu "$inner_explore" "$inner_init" tmaxiter "$max_iter" nangswap \
+                  TBao_adaptive "$tenure_min" "$tenure_max")
+        else
+            ARGS=(tabu "$inner_explore" "$inner_init" tmaxiter "$max_iter" nangswap \
+                  TBao_fixed "$tenure")
+        fi
+        ;;
+    vns)
+        ARGS=(vns "$inner_explore" "$inner_init" tmaxiter "$inner_iter" nangswap \
+              tmaxiter "$vns_outer" bangshake "$p_max" accng improve)
+        ;;
+    sa)
+        ARGS=(ils nols "$inner_init" tmaxiter "$sa_outer_iter" prangswap 1 \
+              saacc "$sa_start_temp" "$sa_end_temp" "$sa_beta" "$sa_interval" "$sa_alpha")
+        ;;
+    *)
+        ARGS=(ils "$inner_explore" "$inner_init" tmaxiter "$inner_iter" nangswap \
+              tmaxiter "$outer_iter" prangswap "$pert_swaps" improve)
+        ;;
+esac
+
+START_TIME=$(date +%s)
+
+OUTPUT=$("$EMILI" "$TEMP_INST" baoimrt "$K" "${ARGS[@]}" rnds "$SEED" 2>/dev/null) || true
+
+END_TIME=$(date +%s)
+ELAPSED=$(( END_TIME - START_TIME ))
+
+RESULT=$(echo "$OUTPUT" | grep "Objective function value:" | awk '{print $NF}')
+
+if [[ -z "$RESULT" ]]; then
+    echo "1e30 $ELAPSED"
+else
+    echo "$RESULT $ELAPSED"
+fi

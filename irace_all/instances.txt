@@ -1,0 +1,2 @@
+/Users/marrojasr/Documents/code/emili_imrt/irace_all/instances/MEDIUM_test_K3
+/Users/marrojasr/Documents/code/emili_imrt/irace_all/instances/MEDIUM_test_K4

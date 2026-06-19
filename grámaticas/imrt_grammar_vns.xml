@@ -1,0 +1,219 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+
+<!-- IMRT grammar — VNS y VND para irace/GGA
+     Algoritmos principales: vns (Variable Neighborhood Search),
+                             vnd (Variable Neighborhood Descent),
+                             gvns (General VNS con sub-LS parametrizable)
+     Problema: imrt (minúsculas, coincide con ImrtBuilder::isCompatibleWith)
+-->
+
+<gr:grammar xmlns:gr="grammar">
+    <gr:derivations xmlns:imrt="imrt_automatic_generation">
+
+        <!-- ── Parámetros numéricos IMRT ──────────────────────────────────── -->
+        <imrt:delta         type="real" min="0.1"    max="5.0"     stepIfEnumerated="0.1"/>
+        <imrt:intensity     type="real" min="0.5"    max="10.0"    stepIfEnumerated="0.5"/>
+        <imrt:max_intensity type="real" min="1.0"    max="10.0"    stepIfEnumerated="1.0"/>
+
+        <!-- ── Parámetros generales de metaheurísticas ────────────────────── -->
+        <imrt:metrotemp       type="real" min="0.1"    max="300"     stepIfEnumerated="1"/>
+        <imrt:tabutenure_size type="int"  min="1"      max="200"     stepIfEnumerated="1"/>
+        <imrt:random_moves    type="int"  min="1"      max="100"     stepIfEnumerated="1"/>
+        <imrt:start_temp      type="real" min="1.1"    max="50000.0" stepIfEnumerated="0.0001"/>
+        <imrt:end_temp        type="real" min="0"      max="1.0"     stepIfEnumerated="0.0001"/>
+        <imrt:temp_ratio      type="real" min="0.0001" max="1"       stepIfEnumerated="0.0001"/>
+        <imrt:tempiterations  type="int"  min="1"      max="5000"    stepIfEnumerated="1"/>
+        <imrt:steps           type="int"  min="1000"   max="100000"  stepIfEnumerated="1000"/>
+
+        <imrt:always_acc_param>
+            <![CDATA[intensify ]]>
+            <or/>
+            <![CDATA[diversify ]]>
+        </imrt:always_acc_param>
+
+        <!-- accng: wrapping de aceptación para VNS -->
+        <imrt:accng>
+            <![CDATA[accng ]]>
+            <imrt:acceptance/>
+        </imrt:accng>
+
+        <!-- pershake: secuencia de perturbaciones para VNS -->
+        <imrt:pershake>
+            <![CDATA[pershake ]]>
+            <imrt:pertubation/>
+            <imrt:pertubation/>
+            <imrt:pertubation/>
+        </imrt:pershake>
+
+        <!-- ── Solución inicial (ImrtBuilder) ─────────────────────────────── -->
+        <imrt:initial_solution>
+            <![CDATA[izero ]]>
+            <or/>
+            <![CDATA[iuniform ]]><imrt:intensity/><![CDATA[ ]]>
+            <or/>
+            <![CDATA[irandom ]]><imrt:max_intensity/><![CDATA[ ]]>
+        </imrt:initial_solution>
+
+        <!-- ── Criterio de terminación (EmBaseBuilder) ────────────────────── -->
+        <imrt:termination>
+            <![CDATA[locmin ]]>
+            <or/>
+            <![CDATA[true ]]>
+            <or/>
+            <![CDATA[maxstep ]]><imrt:steps/><![CDATA[ ]]>
+            <or/>
+            <![CDATA[eval ]]>
+        </imrt:termination>
+
+        <!-- ── Vecindarios (ImrtBuilder) ──────────────────────────────────── -->
+        <imrt:neighborhood>
+            <![CDATA[nshift ]]><imrt:delta/><![CDATA[ ]]>
+            <or/>
+            <![CDATA[nswap ]]>
+        </imrt:neighborhood>
+
+        <!-- ── Perturbación (EmBaseBuilder) ───────────────────────────────── -->
+        <imrt:pertubation>
+            <![CDATA[rndmv ]]><imrt:neighborhood/><![CDATA[ ]]><imrt:random_moves/><![CDATA[ ]]>
+            <or/>
+            <![CDATA[noper ]]>
+            <or/>
+            <![CDATA[secper ]]>
+            <![CDATA[rndmv ]]><imrt:neighborhood/><![CDATA[ ]]><imrt:random_moves/><![CDATA[ ]]>
+            <![CDATA[rndmv ]]><imrt:neighborhood/><![CDATA[ ]]><imrt:random_moves/><![CDATA[ ]]>
+            <![CDATA[rndmv ]]><imrt:neighborhood/><![CDATA[ ]]><imrt:random_moves/><![CDATA[ ]]>
+        </imrt:pertubation>
+
+        <!-- ── Criterio de aceptación (EmBaseBuilder) ─────────────────────── -->
+        <imrt:acceptance>
+            <![CDATA[metropolis ]]><imrt:metrotemp/><![CDATA[ ]]>
+            <or/>
+            <![CDATA[improve ]]>
+            <or/>
+            <![CDATA[always ]]><imrt:always_acc_param/>
+            <or/>
+            <![CDATA[sa_metropolis ]]><imrt:start_temp/><![CDATA[ ]]><imrt:end_temp/><![CDATA[ ]]><imrt:temp_ratio/><![CDATA[ ]]>
+            <or/>
+            <![CDATA[pmetro ]]><imrt:start_temp/><![CDATA[ ]]><imrt:end_temp/><![CDATA[ ]]><imrt:temp_ratio/><![CDATA[ ]]><imrt:tempiterations/><![CDATA[ ]]>
+        </imrt:acceptance>
+
+        <!-- Estrategia first/best dentro del vecindario -->
+        <imrt:vnds>
+            <![CDATA[first ]]>
+            <or/>
+            <![CDATA[best ]]>
+        </imrt:vnds>
+
+        <!-- ── Algoritmos base para VNS/VND ───────────────────────────────── -->
+
+        <imrt:first>
+            <![CDATA[first ]]>
+            <imrt:initial_solution/>
+            <imrt:termination/>
+            <imrt:neighborhood/>
+        </imrt:first>
+
+        <imrt:best>
+            <![CDATA[best ]]>
+            <imrt:initial_solution/>
+            <imrt:termination/>
+            <imrt:neighborhood/>
+        </imrt:best>
+
+        <imrt:firstvns>
+            <![CDATA[first ]]>
+            <imrt:initial_solution/>
+            <imrt:termination/>
+            <imrt:neighborhood/>
+        </imrt:firstvns>
+
+        <imrt:bestvns>
+            <![CDATA[best ]]>
+            <imrt:initial_solution/>
+            <imrt:termination/>
+            <imrt:neighborhood/>
+            <imrt:neighborhood/>
+            <imrt:neighborhood/>
+        </imrt:bestvns>
+
+        <imrt:nols>
+            <![CDATA[nols ]]>
+            <imrt:initial_solution/>
+        </imrt:nols>
+
+        <!-- Sub-local-search para GVNS -->
+        <imrt:algos2>
+            <imrt:first/>
+            <or/>
+            <imrt:best/>
+            <or/>
+            <imrt:nols/>
+        </imrt:algos2>
+
+        <!-- Par de LS para VNS -->
+        <imrt:vnds2>
+            <imrt:firstvns/>
+            <or/>
+            <imrt:bestvns/>
+        </imrt:vnds2>
+
+        <!-- ── VND: cambia vecindario al alcanzar óptimo local ────────────── -->
+        <imrt:vnd>
+            <![CDATA[vnd ]]>
+            <imrt:vnds/>
+            <imrt:initial_solution/>
+            <imrt:termination/>
+            <imrt:neighborhood/>
+            <imrt:neighborhood/>
+            <imrt:neighborhood/>
+        </imrt:vnd>
+
+        <!-- ── VNS estándar: LS interno + shake + aceptación ─────────────── -->
+        <imrt:vns>
+            <![CDATA[vns ]]>
+            <imrt:vnds2/>
+            <imrt:termination/>
+            <imrt:pershake/>
+            <imrt:accng/>
+        </imrt:vns>
+
+        <!-- ── RVNS: sin LS interno, solo shake ───────────────────────────── -->
+        <imrt:rvns>
+            <![CDATA[vns ]]>
+            <imrt:nols/>
+            <imrt:termination/>
+            <imrt:pershake/>
+            <imrt:accng/>
+        </imrt:rvns>
+
+        <!-- ── GVNS: sub-algoritmo parametrizable como LS interno ─────────── -->
+        <imrt:gvns>
+            <![CDATA[vns ]]>
+            <imrt:algos2/>
+            <imrt:termination/>
+            <imrt:pershake/>
+            <imrt:accng/>
+        </imrt:gvns>
+
+        <!-- Algoritmos principales: vns, vnd, rvns, gvns -->
+        <imrt:algorithms>
+            <imrt:vns/>
+            <or/>
+            <imrt:vnd/>
+            <or/>
+            <imrt:rvns/>
+            <or/>
+            <imrt:gvns/>
+        </imrt:algorithms>
+
+        <imrt:main>
+            <imrt:algorithms/>
+        </imrt:main>
+
+        <imrt:main_algorithm output="params">
+            <![CDATA[imrt ]]>
+            <imrt:main/>
+        </imrt:main_algorithm>
+
+    </gr:derivations>
+</gr:grammar>

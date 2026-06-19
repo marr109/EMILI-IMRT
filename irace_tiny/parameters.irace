@@ -1,0 +1,12 @@
+# Parámetros para prueba TINY (espacio reducido, runs rápidos)
+inner_explore  "--inner_explore "  c  (best, first)
+inner_init     "--inner_init "     c  (ifirstk, irandomk)
+inner_iter     "--inner_iter "     i  (1, 2)
+pert_swaps     "--pert_swaps "     i  (1, 2)
+outer_iter     "--outer_iter "     i  (1, 2)
+outer_accept   "--outer_accept "   c  (improve)
+
+# ── Pesos de la función objetivo (espacio reducido para prueba rápida) ──
+w_under        "--w_under "        r,log  (1.0, 100.0)
+w_over         "--w_over "         r,log  (0.1, 5.0)
+w_ptv_over     "--w_ptv_over "     r,log  (0.1, 10.0)

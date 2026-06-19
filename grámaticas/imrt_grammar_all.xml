@@ -1,0 +1,514 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+
+<!--
+  GRAMÁTICA LIBRE DE CONTEXTO PARA GENERACIÓN AUTOMÁTICA DE METAHEURÍSTICAS (IMRT)
+  ==================================================================================
+  Este archivo define una gramática BNF en XML usada por EMILI para explorar
+  automáticamente el espacio de configuraciones de algoritmos de optimización.
+
+  CONCEPTOS CLAVE:
+    - <imrt:foo/>          : símbolo NO-TERMINAL — se expande según su regla
+    - <![CDATA[texto ]]>   : símbolo TERMINAL — texto literal del string de configuración
+    - <or/>                : separa alternativas (equivalente a '|' en BNF)
+    - Los parámetros numéricos se definen con tipo, rango mínimo/máximo y paso
+
+  PUNTO DE ENTRADA: <imrt:main_algorithm> genera "imrt <configuración>"
+  El string resultante es parseado por el motor de EMILI para construir el algoritmo.
+
+  ESTRUCTURA GENERAL:
+    1. Parámetros numéricos (int/real) con rangos
+    2. Componentes primitivos (acceptance, neighborhood, termination, ...)
+    3. Familia 1: algoritmos con terminación fija ("eval")
+    4. Familia 2: algoritmos con terminación parametrizable (usados como sub-rutinas)
+    5. Símbolo raíz: <imrt:main_algorithm>
+
+  TOKENS IMRT:
+    Solución inicial : izero | iuniform <intensity> | irandom <max_intensity>
+    Vecindarios      : nshift <delta> | nswap
+    Terminación ILS  : tmaxiter <n> | tfeasible
+    Aceptación ILS   : aimprove
+-->
+
+<gr:grammar xmlns:gr="grammar">
+    <gr:derivations xmlns:imrt="imrt_automatic_generation">
+
+        <!-- ================================================================
+             PARÁMETROS NUMÉRICOS
+             Definen los rangos válidos para cada hiperparámetro.
+             El configurador automático muestrea valores dentro de [min, max].
+             ================================================================ -->
+
+        <!-- Delta: tamaño del paso en nshift (ajuste de intensidades) -->
+        <imrt:delta         type="real" min="0.1"    max="5.0"     stepIfEnumerated="0.1"/>
+
+        <!-- Intensidad uniforme para iuniform (solución inicial) -->
+        <imrt:intensity     type="real" min="0.5"    max="10.0"    stepIfEnumerated="0.5"/>
+
+        <!-- Intensidad máxima para irandom (solución inicial aleatoria) -->
+        <imrt:max_intensity type="real" min="1.0"    max="10.0"    stepIfEnumerated="1.0"/>
+
+        <!-- Temperatura fija para el criterio metropolis simple -->
+        <imrt:metrotemp       type="real" min="0.1"    max="300"     stepIfEnumerated="1"/>
+
+        <!-- Tamaño de la lista tabú (número de soluciones/atributos prohibidos) -->
+        <imrt:tabutenure_size type="int"  min="1"      max="200"     stepIfEnumerated="1"/>
+
+        <!-- Número de movimientos aleatorios aplicados en la perturbación/shake -->
+        <imrt:random_moves    type="int"  min="1"      max="100"     stepIfEnumerated="1"/>
+
+        <!-- Temperatura inicial para Simulated Annealing (sa_metropolis, pmetro) -->
+        <imrt:start_temp      type="real" min="1.1"    max="50000.0" stepIfEnumerated="0.0001"/>
+
+        <!-- Temperatura final (criterio de parada del enfriamiento) -->
+        <imrt:end_temp        type="real" min="0"      max="1.0"     stepIfEnumerated="0.0001"/>
+
+        <!-- Factor de enfriamiento: temp_{t+1} = temp_t * temp_ratio -->
+        <imrt:temp_ratio      type="real" min="0.0001" max="1"       stepIfEnumerated="0.0001"/>
+
+        <!-- Número de iteraciones por nivel de temperatura (para pmetro) -->
+        <imrt:tempiterations  type="int"  min="1"      max="5000"    stepIfEnumerated="1"/>
+
+        <!-- Número de pasos/evaluaciones máximas (para maxstep) -->
+        <imrt:steps           type="int"  min="1000"   max="100000"  stepIfEnumerated="1000"/>
+
+
+        <!-- ================================================================
+             COMPONENTES PRIMITIVOS
+             ================================================================ -->
+
+        <!-- Parámetro del criterio "always": fuerza intensificación o diversificación -->
+        <imrt:always_acc_param>
+            <![CDATA[intensify ]]>
+            <or/>
+            <![CDATA[diversify ]]>
+        </imrt:always_acc_param>
+
+        <!-- Envuelve un criterio de aceptación con el prefijo "accng" (VNS neighborhood change) -->
+        <imrt:accng>
+            <![CDATA[accng ]]>
+            <imrt:acceptance/>
+        </imrt:accng>
+
+        <!-- ================================================================
+             SHAKE (perturbación para VNS)
+             "pershake" encadena 3 perturbaciones aleatorias.
+             ================================================================ -->
+        <imrt:pershake>
+            <![CDATA[pershake ]]>
+            <imrt:pertubation/>
+            <imrt:pertubation/>
+            <imrt:pertubation/>
+        </imrt:pershake>
+
+
+        <!-- ================================================================
+             SOLUCIÓN INICIAL (ImrtBuilder)
+             ================================================================ -->
+        <imrt:initial_solution>
+            <![CDATA[izero ]]>                                          <!-- Todos los beamlets a 0 -->
+            <or/>
+            <![CDATA[iuniform ]]><imrt:intensity/><![CDATA[ ]]>         <!-- Intensidad uniforme fija -->
+            <or/>
+            <![CDATA[irandom ]]><imrt:max_intensity/><![CDATA[ ]]>      <!-- Intensidades aleatorias en [0, max] -->
+        </imrt:initial_solution>
+
+        <!-- ================================================================
+             CRITERIO DE TERMINACIÓN (EmBaseBuilder)
+             ================================================================ -->
+        <imrt:termination>
+            <![CDATA[locmin ]]>                                          <!-- Para en óptimo local -->
+            <or/>
+            <![CDATA[true ]]>                                            <!-- Nunca para (externo controla) -->
+            <or/>
+            <![CDATA[maxstep ]]><imrt:steps/><![CDATA[ ]]>              <!-- Para tras N pasos -->
+            <or/>
+            <![CDATA[eval ]]>                                            <!-- Para tras evaluación completa -->
+        </imrt:termination>
+
+        <!-- ================================================================
+             VECINDARIOS (ImrtBuilder)
+             nshift: desplaza la intensidad de un beamlet en ±delta
+             nswap:  intercambia las intensidades de dos beamlets
+             ================================================================ -->
+        <imrt:neighborhood>
+            <![CDATA[nshift ]]><imrt:delta/><![CDATA[ ]]>
+            <or/>
+            <![CDATA[nswap ]]>
+        </imrt:neighborhood>
+
+        <!-- ================================================================
+             PERTURBACIÓN (EmBaseBuilder, para ILS)
+             "rndmv"  = movimiento aleatorio en un vecindario
+             "noper"  = sin perturbación
+             "secper" = secuencia de perturbaciones
+             ================================================================ -->
+        <imrt:pertubation>
+            <![CDATA[rndmv ]]><imrt:neighborhood/><![CDATA[ ]]><imrt:random_moves/><![CDATA[ ]]>
+            <or/>
+            <![CDATA[noper ]]>
+            <or/>
+            <![CDATA[secper ]]>
+            <![CDATA[rndmv ]]><imrt:neighborhood/><![CDATA[ ]]><imrt:random_moves/><![CDATA[ ]]>
+            <![CDATA[rndmv ]]><imrt:neighborhood/><![CDATA[ ]]><imrt:random_moves/><![CDATA[ ]]>
+            <or/>
+            <![CDATA[secper ]]>
+            <![CDATA[rndmv ]]><imrt:neighborhood/><![CDATA[ ]]><imrt:random_moves/><![CDATA[ ]]>
+            <![CDATA[rndmv ]]><imrt:neighborhood/><![CDATA[ ]]><imrt:random_moves/><![CDATA[ ]]>
+            <![CDATA[rndmv ]]><imrt:neighborhood/><![CDATA[ ]]><imrt:random_moves/><![CDATA[ ]]>
+        </imrt:pertubation>
+
+        <!-- ================================================================
+             CRITERIO DE ACEPTACIÓN (EmBaseBuilder)
+             Decide si una nueva solución (posiblemente peor) es aceptada.
+             ================================================================ -->
+        <imrt:acceptance>
+            <!-- Metropolis con temperatura fija -->
+            <![CDATA[metropolis ]]><imrt:metrotemp/><![CDATA[ ]]>
+            <or/>
+            <!-- Solo acepta mejoras (búsqueda local pura) -->
+            <![CDATA[improve ]]>
+            <or/>
+            <!-- Siempre acepta, con dirección: intensify o diversify -->
+            <![CDATA[always ]]><imrt:always_acc_param/>
+            <or/>
+            <!-- Simulated Annealing: temperatura decrece de start a end con ratio -->
+            <![CDATA[sa_metropolis ]]><imrt:start_temp/><![CDATA[ ]]><imrt:end_temp/><![CDATA[ ]]><imrt:temp_ratio/><![CDATA[ ]]>
+            <or/>
+            <!-- SA por fases: N iteraciones por nivel de temperatura -->
+            <![CDATA[pmetro ]]><imrt:start_temp/><![CDATA[ ]]><imrt:end_temp/><![CDATA[ ]]><imrt:temp_ratio/><![CDATA[ ]]><imrt:tempiterations/><![CDATA[ ]]>
+        </imrt:acceptance>
+
+        <!-- ================================================================
+             GESTIÓN DE LA LISTA TABÚ
+             ================================================================ -->
+        <imrt:tabutenure>
+            <!-- Prohíbe soluciones completas (hash de toda la solución) -->
+            <![CDATA[Tabu_all_solution ]]><imrt:tabutenure_size/><![CDATA[ ]]>
+            <or/>
+            <!-- Prohíbe atributos de un subconjunto de beamlets -->
+            <![CDATA[Tabu_1_car ]]><imrt:tabutenure_size/><![CDATA[ ]]>
+            <or/>
+            <!-- Prohíbe una posición específica en la solución -->
+            <![CDATA[Tabu_1_position ]]><imrt:tabutenure_size/><![CDATA[ ]]>
+        </imrt:tabutenure>
+
+        <!-- Estrategia de exploración del vecindario: first o best improvement -->
+        <imrt:vnds>
+            <![CDATA[first ]]>
+            <or/>
+            <![CDATA[best ]]>
+        </imrt:vnds>
+
+
+        <!-- ================================================================
+             FAMILIA 1: ALGORITMOS CON TERMINACIÓN FIJA ("eval")
+             Usados como algoritmo principal o como sub-rutina interna
+             donde la terminación la controla el nivel superior.
+             ================================================================ -->
+
+        <!-- Búsqueda local "first improvement" -->
+        <imrt:first>
+            <![CDATA[first ]]>
+            <imrt:initial_solution/>
+            <![CDATA[eval ]]>
+            <imrt:neighborhood/>
+        </imrt:first>
+
+        <!-- Búsqueda local "best improvement" -->
+        <imrt:best>
+            <![CDATA[best ]]>
+            <imrt:initial_solution/>
+            <![CDATA[eval ]]>
+            <imrt:neighborhood/>
+        </imrt:best>
+
+        <!-- first improvement para uso como sub-LS en VNS -->
+        <imrt:firstvns>
+            <![CDATA[first ]]>
+            <imrt:initial_solution/>
+            <![CDATA[eval ]]>
+            <imrt:neighborhood/>
+        </imrt:firstvns>
+
+        <!-- best improvement con 3 vecindarios para VNS -->
+        <imrt:bestvns>
+            <![CDATA[best ]]>
+            <imrt:initial_solution/>
+            <![CDATA[eval ]]>
+            <imrt:neighborhood/>
+            <imrt:neighborhood/>
+            <imrt:neighborhood/>
+        </imrt:bestvns>
+
+        <!-- Iterated Local Search: sub-LS interno + perturbación + aceptación -->
+        <imrt:ils>
+            <![CDATA[ils ]]>
+            <imrt:algorithms2/>
+            <![CDATA[eval ]]>
+            <imrt:pertubation/>
+            <imrt:acceptance/>
+        </imrt:ils>
+
+        <!-- Tabu Search: LS con lista tabú -->
+        <imrt:tabu>
+            <![CDATA[tabu ]]>
+            <imrt:vnds/>
+            <imrt:initial_solution/>
+            <![CDATA[eval ]]>
+            <imrt:neighborhood/>
+            <imrt:tabutenure/>
+        </imrt:tabu>
+
+        <!-- Variable Neighborhood Descent: cambia vecindario al alcanzar óptimo local -->
+        <imrt:vnd>
+            <![CDATA[vnd ]]>
+            <imrt:vnds/>
+            <imrt:initial_solution/>
+            <![CDATA[eval ]]>
+            <imrt:neighborhood/>
+            <imrt:neighborhood/>
+            <imrt:neighborhood/>
+        </imrt:vnd>
+
+        <!-- Par de local searches para VNS (firstvns o bestvns) -->
+        <imrt:vnds2>
+            <imrt:firstvns/>
+            <or/>
+            <imrt:bestvns/>
+        </imrt:vnds2>
+
+        <!-- Variable Neighborhood Search: shake + LS interno + aceptación -->
+        <imrt:vns>
+            <![CDATA[vns ]]>
+            <imrt:vnds2/>
+            <![CDATA[eval ]]>
+            <imrt:pershake/>
+            <imrt:accng/>
+        </imrt:vns>
+
+        <!-- Reduced VNS: sin LS interno (solo shake + aceptación) -->
+        <imrt:rvns>
+            <![CDATA[vns ]]>
+            <imrt:nols/>
+            <![CDATA[eval ]]>
+            <imrt:pershake/>
+            <imrt:accng/>
+        </imrt:rvns>
+
+        <!-- General VNS: sub-algoritmo parametrizable como LS interno -->
+        <imrt:gvns>
+            <![CDATA[vns ]]>
+            <imrt:algorithms2/>
+            <![CDATA[eval ]]>
+            <imrt:pershake/>
+            <imrt:accng/>
+        </imrt:gvns>
+
+        <!-- No Local Search: solo construye la solución inicial, sin mejora -->
+        <imrt:nols>
+            <![CDATA[nols ]]>
+            <imrt:initial_solution/>
+        </imrt:nols>
+
+        <!-- Generalized Tabu: tabu search con sub-algoritmo como LS interno -->
+        <imrt:gtabu>
+            <![CDATA[gtabu ]]>
+            <imrt:algorithms2/>
+            <![CDATA[eval ]]>
+            <imrt:tabutenure/>
+        </imrt:gtabu>
+
+        <!-- Búsqueda local: elige entre first y best improvement -->
+        <imrt:localsearch>
+            <imrt:first/>
+            <or/>
+            <imrt:best/>
+        </imrt:localsearch>
+
+        <!-- ================================================================
+             ALGORITMOS PRINCIPALES (familia 1, terminación fija con "eval")
+             ================================================================ -->
+        <imrt:algorithms>
+            <imrt:localsearch/>
+            <or/>
+            <imrt:ils/>
+            <or/>
+            <imrt:tabu/>
+            <or/>
+            <imrt:vns/>
+            <or/>
+            <imrt:vnd/>
+            <or/>
+            <imrt:rvns/>
+            <or/>
+            <imrt:gvns/>
+            <or/>
+            <imrt:gtabu/>
+        </imrt:algorithms>
+
+
+        <!-- ================================================================
+             FAMILIA 2: ALGORITMOS CON TERMINACIÓN PARAMETRIZABLE
+             Usados como sub-rutinas internas (dentro de ILS, VNS, etc.)
+             donde la condición de parada es un parámetro más de la gramática.
+             ================================================================ -->
+
+        <!-- first improvement con terminación parametrizable -->
+        <imrt:first2>
+            <![CDATA[first ]]>
+            <imrt:initial_solution/>
+            <imrt:termination/>
+            <imrt:neighborhood/>
+        </imrt:first2>
+
+        <!-- best improvement con terminación parametrizable -->
+        <imrt:best2>
+            <![CDATA[best ]]>
+            <imrt:initial_solution/>
+            <imrt:termination/>
+            <imrt:neighborhood/>
+        </imrt:best2>
+
+        <!-- first para VNS, versión 2 -->
+        <imrt:firstvns2>
+            <![CDATA[first ]]>
+            <imrt:initial_solution/>
+            <imrt:termination/>
+            <imrt:neighborhood/>
+        </imrt:firstvns2>
+
+        <!-- best para VNS con 3 vecindarios, versión 2 -->
+        <imrt:bestvns2>
+            <![CDATA[best ]]>
+            <imrt:initial_solution/>
+            <imrt:termination/>
+            <imrt:neighborhood/>
+            <imrt:neighborhood/>
+            <imrt:neighborhood/>
+        </imrt:bestvns2>
+
+        <!-- ILS versión 2: terminación parametrizable -->
+        <imrt:ils2>
+            <![CDATA[ils ]]>
+            <imrt:algorithms2/>
+            <imrt:termination/>
+            <imrt:pertubation/>
+            <imrt:acceptance/>
+        </imrt:ils2>
+
+        <!-- Tabu Search versión 2: terminación parametrizable -->
+        <imrt:tabu2>
+            <![CDATA[tabu ]]>
+            <imrt:vnds/>
+            <imrt:initial_solution/>
+            <imrt:termination/>
+            <imrt:neighborhood/>
+            <imrt:tabutenure/>
+        </imrt:tabu2>
+
+        <!-- VND versión 2: terminación parametrizable -->
+        <imrt:vnd2>
+            <![CDATA[vnd ]]>
+            <imrt:vnds/>
+            <imrt:initial_solution/>
+            <imrt:termination/>
+            <imrt:neighborhood/>
+            <imrt:neighborhood/>
+            <imrt:neighborhood/>
+        </imrt:vnd2>
+
+        <!-- Par de local searches para VNS, versión 2 -->
+        <imrt:vnds22>
+            <imrt:firstvns2/>
+            <or/>
+            <imrt:bestvns2/>
+        </imrt:vnds22>
+
+        <!-- VNS versión 2: terminación parametrizable -->
+        <imrt:vns2>
+            <![CDATA[vns ]]>
+            <imrt:vnds22/>
+            <imrt:termination/>
+            <imrt:pershake/>
+            <imrt:accng/>
+        </imrt:vns2>
+
+        <!-- RVNS versión 2: sin LS interno, terminación parametrizable -->
+        <imrt:rvns2>
+            <![CDATA[vns ]]>
+            <imrt:nols2/>
+            <imrt:termination/>
+            <imrt:pershake/>
+            <imrt:accng/>
+        </imrt:rvns2>
+
+        <!-- GVNS versión 2: sub-algoritmo como LS, terminación parametrizable -->
+        <imrt:gvns2>
+            <![CDATA[vns ]]>
+            <imrt:algorithms2/>
+            <imrt:termination/>
+            <imrt:pershake/>
+            <imrt:accng/>
+        </imrt:gvns2>
+
+        <!-- nols versión 2 -->
+        <imrt:nols2>
+            <![CDATA[nols ]]>
+            <imrt:initial_solution/>
+        </imrt:nols2>
+
+        <!-- Generalized Tabu versión 2: terminación parametrizable -->
+        <imrt:gtabu2>
+            <![CDATA[gtabu ]]>
+            <imrt:algorithms2/>
+            <imrt:termination/>
+            <imrt:tabutenure/>
+        </imrt:gtabu2>
+
+        <!-- Búsqueda local versión 2 -->
+        <imrt:localsearch2>
+            <imrt:first2/>
+            <or/>
+            <imrt:best2/>
+        </imrt:localsearch2>
+
+        <!-- Sub-algoritmos con terminación parametrizable (para uso interno) -->
+        <imrt:algorithms2>
+            <imrt:localsearch2/>
+            <or/>
+            <imrt:ils2/>
+            <or/>
+            <imrt:tabu2/>
+            <or/>
+            <imrt:vns2/>
+            <or/>
+            <imrt:vnd2/>
+            <or/>
+            <imrt:rvns2/>
+            <or/>
+            <imrt:gvns2/>
+            <or/>
+            <imrt:gtabu2/>
+            <or/>
+            <imrt:nols2/>
+        </imrt:algorithms2>
+
+
+        <!-- ================================================================
+             SÍMBOLO RAÍZ
+             <imrt:main> expande al espacio completo de algoritmos configurables.
+             <imrt:main_algorithm> es el punto de entrada: genera el string
+             "imrt <configuración>" que EMILI parsea para construir el solucionador.
+             ================================================================ -->
+        <imrt:main>
+            <imrt:algorithms/>
+        </imrt:main>
+
+        <!-- output="params" indica que este nodo genera el string de parámetros final -->
+        <imrt:main_algorithm output="params">
+            <![CDATA[imrt ]]>
+            <imrt:main/>
+        </imrt:main_algorithm>
+
+    </gr:derivations>
+</gr:grammar>
