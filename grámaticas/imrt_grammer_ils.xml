@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+
+<!-- IMRT grammar — ILS y variantes para irace/GGA
+     Algoritmos principales: ils (Iterated Local Search)
+     Problema: imrt (minúsculas, coincide con ImrtBuilder::isCompatibleWith)
+-->
+
+<gr:grammar xmlns:gr="grammar">
+    <gr:derivations xmlns:imrt="imrt_automatic_generation">
+
+        <!-- ── Parámetros numéricos IMRT ──────────────────────────────────── -->
+        <imrt:delta         type="real" min="0.1"    max="5.0"     stepIfEnumerated="0.1"/>
+        <imrt:intensity     type="real" min="0.5"    max="10.0"    stepIfEnumerated="0.5"/>
+        <imrt:max_intensity type="real" min="1.0"    max="10.0"    stepIfEnumerated="1.0"/>
+
+        <!-- ── Parámetros generales de metaheurísticas ────────────────────── -->
+        <imrt:metrotemp       type="real" min="0.1"    max="300"     stepIfEnumerated="1"/>
+        <imrt:tabutenure_size type="int"  min="1"      max="200"     stepIfEnumerated="1"/>
+        <imrt:random_moves    type="int"  min="1"      max="100"     stepIfEnumerated="1"/>
+        <imrt:start_temp      type="real" min="1.1"    max="50000.0" stepIfEnumerated="0.0001"/>
+        <imrt:end_temp        type="real" min="0"      max="1.0"     stepIfEnumerated="0.0001"/>
+        <imrt:temp_ratio      type="real" min="0.0001" max="1"       stepIfEnumerated="0.0001"/>
+        <imrt:tempiterations  type="int"  min="1"      max="5000"    stepIfEnumerated="1"/>
+        <imrt:steps           type="int"  min="1000"   max="100000"  stepIfEnumerated="1000"/>
+
+        <imrt:always_acc_param>
+            <![CDATA[intensify ]]>
+            <or/>
+            <![CDATA[diversify ]]>
+        </imrt:always_acc_param>
+
+        <!-- ── Solución inicial (ImrtBuilder) ─────────────────────────────── -->
+        <imrt:initial_solution>
+            <![CDATA[izero ]]>
+            <or/>
+            <![CDATA[iuniform ]]><imrt:intensity/><![CDATA[ ]]>
+            <or/>
+            <![CDATA[irandom ]]><imrt:max_intensity/><![CDATA[ ]]>
+        </imrt:initial_solution>
+
+        <!-- ── Criterio de terminación (EmBaseBuilder) ────────────────────── -->
+        <imrt:termination>
+            <![CDATA[locmin ]]>
+            <or/>
+            <![CDATA[true ]]>
+            <or/>
+            <![CDATA[maxstep ]]><imrt:steps/><![CDATA[ ]]>
+            <or/>
+            <![CDATA[eval ]]>
+        </imrt:termination>
+
+        <!-- ── Vecindarios (ImrtBuilder) ──────────────────────────────────── -->
+        <imrt:neighborhood>
+            <![CDATA[nshift ]]><imrt:delta/><![CDATA[ ]]>
+            <or/>
+            <![CDATA[nswap ]]>
+        </imrt:neighborhood>
+
+        <!-- ── Perturbación (EmBaseBuilder) ───────────────────────────────── -->
+        <imrt:pertubation>
+            <![CDATA[rndmv ]]><imrt:neighborhood/><![CDATA[ ]]><imrt:random_moves/><![CDATA[ ]]>
+            <or/>
+            <![CDATA[noper ]]>
+            <or/>
+            <![CDATA[secper ]]>
+            <![CDATA[rndmv ]]><imrt:neighborhood/><![CDATA[ ]]><imrt:random_moves/><![CDATA[ ]]>
+            <![CDATA[rndmv ]]><imrt:neighborhood/><![CDATA[ ]]><imrt:random_moves/><![CDATA[ ]]>
+            <![CDATA[rndmv ]]><imrt:neighborhood/><![CDATA[ ]]><imrt:random_moves/><![CDATA[ ]]>
+        </imrt:pertubation>
+
+        <!-- ── Criterio de aceptación (EmBaseBuilder) ─────────────────────── -->
+        <imrt:acceptance>
+            <![CDATA[metropolis ]]><imrt:metrotemp/><![CDATA[ ]]>
+            <or/>
+            <![CDATA[improve ]]>
+            <or/>
+            <![CDATA[always ]]><imrt:always_acc_param/>
+            <or/>
+            <![CDATA[sa_metropolis ]]><imrt:start_temp/><![CDATA[ ]]><imrt:end_temp/><![CDATA[ ]]><imrt:temp_ratio/><![CDATA[ ]]>
+            <or/>
+            <![CDATA[pmetro ]]><imrt:start_temp/><![CDATA[ ]]><imrt:end_temp/><![CDATA[ ]]><imrt:temp_ratio/><![CDATA[ ]]><imrt:tempiterations/><![CDATA[ ]]>
+        </imrt:acceptance>
+
+        <!-- ── Algoritmos base (sub-LS para ILS) ──────────────────────────── -->
+
+        <imrt:first>
+            <![CDATA[first ]]>
+            <imrt:initial_solution/>
+            <imrt:termination/>
+            <imrt:neighborhood/>
+        </imrt:first>
+
+        <imrt:best>
+            <![CDATA[best ]]>
+            <imrt:initial_solution/>
+            <imrt:termination/>
+            <imrt:neighborhood/>
+        </imrt:best>
+
+        <imrt:nols>
+            <![CDATA[nols ]]>
+            <imrt:initial_solution/>
+        </imrt:nols>
+
+        <!-- Sub-algoritmo para ILS interno -->
+        <imrt:algos2>
+            <imrt:first/>
+            <or/>
+            <imrt:best/>
+            <or/>
+            <imrt:nols/>
+        </imrt:algos2>
+
+        <!-- ── ILS: sub-algoritmo + terminación + perturbación + aceptación── -->
+        <imrt:ils>
+            <![CDATA[ils ]]>
+            <imrt:algos2/>
+            <imrt:termination/>
+            <imrt:pertubation/>
+            <imrt:acceptance/>
+        </imrt:ils>
+
+        <!-- Algoritmos principales: solo ILS -->
+        <imrt:algorithms>
+            <imrt:ils/>
+        </imrt:algorithms>
+
+        <imrt:main>
+            <imrt:algorithms/>
+        </imrt:main>
+
+        <imrt:main_algorithm output="params">
+            <![CDATA[imrt ]]>
+            <imrt:main/>
+        </imrt:main_algorithm>
+
+    </gr:derivations>
+</gr:grammar>

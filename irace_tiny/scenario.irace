@@ -1,0 +1,16 @@
+# IRACE scenario mínimo — prueba funcional con instancia TINY
+targetRunner         = "/Users/marrojasr/Documents/code/emili_imrt/irace_tiny/target-runner"
+trainInstancesFile   = "/Users/marrojasr/Documents/code/emili_imrt/irace_tiny/instances.txt"
+parameterFile        = "/Users/marrojasr/Documents/code/emili_imrt/irace_tiny/parameters.irace"
+logFile              = "/Users/marrojasr/Documents/code/emili_imrt/irace_tiny/results/irace.log"
+
+# Presupuesto mínimo para verificar que el flujo funciona
+maxTime              = 120
+targetRunnerTimeout  = 30
+
+parallel             = 1
+seed                 = 42
+debugLevel           = 2
+
+firstTest            = 2
+testType             = "t-test"

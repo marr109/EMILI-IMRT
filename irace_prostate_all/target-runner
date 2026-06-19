@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# =============================================================================
+# target-runner — ILS vs rVNS en PROSTATE_sampled K=4
+# "first" improvement fijado (best = 128 vecinos × 30s = inviable en calibración)
+#
+# Parámetros tuneables vía IRACE:
+#   --algoritmo    {ils,vns}          algoritmo a competir
+#   --inner_init   {ifirstk,irandomk} solución inicial BAO
+#   --inner_iter   {1,2}             iteraciones búsqueda local interna
+#   --outer_iter   {1,2}             reinicios externos (ILS)
+#   --pert_swaps   {1,2}             swaps en perturbación (ILS)
+#   --p_max        {1,2}             amplitud máxima shake (rVNS)
+#   --vns_outer    {1,2}             reinicios externos (rVNS)
+#   --w_under      [1..1000]         peso penalización subdosis PTV
+#   --w_over       [0.01..10]        peso penalización sobredosis OAR
+#   --w_ptv_over   [0.1..50]         peso penalización sobredosis PTV
+# =============================================================================
+set -euo pipefail
+
+EMILI="$(cd "$(dirname "$0")/.." && pwd)/build/emili"
+
+CONFIG_ID=$1; shift
+INSTANCE_ID=$1; shift
+SEED=$1; shift
+INSTANCE=$1; shift
+
+# Valores por defecto
+algoritmo="ils"
+inner_init="irandomk"
+inner_iter=1
+outer_iter=1
+pert_swaps=1
+p_max=1
+vns_outer=1
+w_under=1.0
+w_over=0.5
+w_ptv_over=0.5
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --algoritmo)     algoritmo="$2";     shift 2 ;;
+        --inner_init)    inner_init="$2";    shift 2 ;;
+        --inner_iter)    inner_iter="$2";    shift 2 ;;
+        --outer_iter)    outer_iter="$2";    shift 2 ;;
+        --pert_swaps)    pert_swaps="$2";    shift 2 ;;
+        --p_max)         p_max="$2";         shift 2 ;;
+        --vns_outer)     vns_outer="$2";     shift 2 ;;
+        --w_under)       w_under="$2";       shift 2 ;;
+        --w_over)        w_over="$2";        shift 2 ;;
+        --w_ptv_over)    w_ptv_over="$2";    shift 2 ;;
+        *) shift ;;
+    esac
+done
+
+# K desde nombre de instancia (PROSTATE_sampled_K4 → 4)
+BASENAME=$(basename "$INSTANCE")
+K=$(echo "$BASENAME" | sed 's/.*_K//')
+[[ "$K" =~ ^[0-9]+$ ]] || K=4
+
+# ── Crear instancia temporal con pesos tuneados ──
+TEMP_INST=$(mktemp -d)
+cleanup() { rm -rf "$TEMP_INST"; }
+trap 'cleanup; ELAPSED=$(( $(date +%s) - START_TIME )); echo "1e30 $ELAPSED"; exit 0' TERM INT
+trap 'cleanup' EXIT
+
+for f in "$INSTANCE"/*; do
+    fname=$(basename "$f")
+    if [ "$fname" != "instance_config.txt" ]; then
+        ln -s "$f" "$TEMP_INST/$fname"
+    fi
+done
+
+cp "$INSTANCE/instance_config.txt" "$TEMP_INST/instance_config.txt"
+sed -i '' "s/^w_under[[:space:]].*/w_under       $w_under/"     "$TEMP_INST/instance_config.txt"
+sed -i '' "s/^w_over[[:space:]].*/w_over        $w_over/"       "$TEMP_INST/instance_config.txt"
+sed -i '' "s/^w_ptv_over[[:space:]].*/w_ptv_over    $w_ptv_over/"   "$TEMP_INST/instance_config.txt"
+
+case "$algoritmo" in
+    ils)
+        ARGS=(ils first "$inner_init" tmaxiter "$inner_iter" nangswap \
+              tmaxiter "$outer_iter" prangswap "$pert_swaps" improve)
+        ;;
+    vns)
+        ARGS=(vns first "$inner_init" tmaxiter "$inner_iter" nangswap \
+              tmaxiter "$vns_outer" bangshake "$p_max" accng improve)
+        ;;
+    *)
+        ARGS=(ils first "$inner_init" tmaxiter "$inner_iter" nangswap \
+              tmaxiter "$outer_iter" prangswap 1 improve)
+        ;;
+esac
+
+START_TIME=$(date +%s)
+
+OUTPUT=$("$EMILI" "$TEMP_INST" baoimrt "$K" "${ARGS[@]}" rnds "$SEED" 2>/dev/null) || true
+
+END_TIME=$(date +%s)
+ELAPSED=$(( END_TIME - START_TIME ))
+
+RESULT=$(echo "$OUTPUT" | grep "Objective function value:" | awk '{print $NF}')
+
+if [[ -z "$RESULT" ]]; then
+    echo "1e30 $ELAPSED"
+else
+    echo "$RESULT $ELAPSED"
+fi

@@ -1,0 +1,35 @@
+# ============================================================================
+# IRACE scenario — competencia unificada ILS / Tabu / GVNS / Greedy / SA
+# Instancias: MEDIUM_test K=3 (difícil) y K=4 (moderado)
+#
+# A diferencia de irace_medium/irace_tabu (que calibran UN algoritmo fijo),
+# aquí "algoritmo" es parte del espacio de búsqueda: irace decide con qué
+# metaheurística + hiperparámetros quedarse, vía elitist racing + t-test.
+#
+# Presupuesto de tiempo: VNS/Greedy son ~2x más caros por corrida que ILS/Tabu
+# en MEDIUM_test (vecindario completo + reconstrucción en cada paso mayor),
+# así que el timeout por run se amplía con margen sobre el peor caso observado.
+# ============================================================================
+
+targetRunner         = "/Users/marrojasr/Documents/code/emili_imrt/irace_all/target-runner"
+trainInstancesFile   = "/Users/marrojasr/Documents/code/emili_imrt/irace_all/instances.txt"
+parameterFile        = "/Users/marrojasr/Documents/code/emili_imrt/irace_all/parameters_all.irace"
+logFile              = "/Users/marrojasr/Documents/code/emili_imrt/irace_all/results/irace.log"
+
+# ── Presupuesto ───────────────────────────────────────────────────────────────
+maxTime              = 8000
+
+# Timeout por run: margen amplio sobre el peor caso esperado (VNS/Greedy ~150-200s)
+targetRunnerTimeout  = 400
+
+# ── Paralelismo ───────────────────────────────────────────────────────────────
+parallel             = 4
+
+# ── Semilla y output ──────────────────────────────────────────────────────────
+seed                 = 42
+debugLevel           = 1
+
+# ── Tests estadísticos ────────────────────────────────────────────────────────
+# 2 instancias (K=3 difícil, K=4 moderado) → t-test con firstTest=2
+firstTest            = 2
+testType             = "t-test"
