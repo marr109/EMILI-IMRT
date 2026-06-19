@@ -346,7 +346,7 @@ Clinical instance files (Dij matrices, VOILists) are **not tracked** in this rep
 ## License & Credits
 
 - **EMILI framework**: Federico Pagnozzi (BSD 2-Clause) — `federico.pagnozzi@ulb.ac.be`
-- **IMRT extension** (BAO+FMO, OSQP integration, irace tuning): Mauricio Rojas
+- **IMRT extension** (BAO+FMO, OSQP integration, irace tuning): Marco Rojas
 - **OSQP**: Bartolomeo Stellato, Goran Banjac et al. (Apache 2.0)
 
 ```
