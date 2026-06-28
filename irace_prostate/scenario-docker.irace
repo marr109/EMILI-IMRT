@@ -1,0 +1,26 @@
+# ============================================================================
+# IRACE scenario — BAO PROSTATE real, K=4 (Docker-adapted)
+# ============================================================================
+
+targetRunner         = "/project/irace_prostate/target-runner-docker"
+trainInstancesFile   = "/project/irace_prostate/instances-docker.txt"
+parameterFile        = "/project/irace_prostate/parameters.irace"
+logFile              = "/project/irace_prostate/results/irace.log"
+
+# ── Presupuesto ───────────────────────────────────────────────────────────
+maxTime              = 20000
+targetRunnerTimeout  = 1500
+
+# ── Paralelismo ───────────────────────────────────────────────────────────
+parallel             = 4
+
+# ── Config inicial ────────────────────────────────────────────────────────
+configurationsFile   = "/project/irace_prostate/init_config.txt"
+
+# ── Semilla y output ──────────────────────────────────────────────────────
+seed                 = 42
+debugLevel           = 1
+
+# ── Tests estadísticos ────────────────────────────────────────────────────
+firstTest            = 2
+testType             = "t-test"

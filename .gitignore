@@ -102,4 +102,5 @@ Backup[ ]of[ ]*.numbers/
 # Logs and databases #
 *.log
 *.txt
+!benchmark/*.txt
 *.mat
