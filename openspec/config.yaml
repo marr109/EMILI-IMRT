@@ -1,0 +1,36 @@
+# openspec/config.yaml
+schema: spec-driven
+
+context: |
+  Tech stack: C++11, CMake >= 2.8, GCC/Clang
+  Architecture: Metaheuristic optimization framework (EMILI) for IMRT treatment planning.
+    CLI-based algorithm composition via Builder pattern.
+    OSQP integration for exact FMO solves (optional, WITH_OSQP=ON).
+    irace hyperparameter tuning scenarios.
+  Testing: No test framework detected. No CTest, GoogleTest, Catch2, or test files.
+    Strict TDD disabled — no test runner available.
+  Style: Academic research code, BSD-2-Clause licensed.
+    Comment style: Doxygen. Naming: camelCase for methods, PascalCase for classes.
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+  apply:
+    - Follow existing code patterns (C++11, Doxygen comments, Builder pattern)
+    tdd: false
+    test_command: ""
+  verify:
+    test_command: ""
+    build_command: "mkdir -p build && cd build && cmake .. && make"
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas
