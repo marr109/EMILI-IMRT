@@ -1,21 +1,21 @@
 # ============================================================================
-# IRACE scenario — BAO ILS, PROSTATE_tiny instances (8 angles x 24 dimlets)
+# IRACE scenario — BAO Tabu Search, PROSTATE_tiny instances (8 angles x 24 dimlets)
 # ============================================================================
 
-targetRunner         = "/project/irace_prostate/target-runner"
-trainInstancesFile   = "/project/irace_prostate/instances.txt"
-parameterFile        = "/project/irace_prostate/parameters.irace"
-logFile              = "/project/irace_prostate/results/irace.log"
+targetRunner         = "/project/irace_tabu/target-runner"
+trainInstancesFile   = "/project/irace_tabu/instances.txt"
+parameterFile        = "/project/irace_tabu/parameters.irace"
+logFile              = "/project/irace_tabu/results/irace.log"
 
 # ── Presupuesto ───────────────────────────────────────────────────────────
 maxTime              = 20000
-targetRunnerTimeout  = 60
+targetRunnerTimeout  = 120
 
 # ── Paralelismo ───────────────────────────────────────────────────────────
 parallel             = 4
 
 # ── Config inicial ────────────────────────────────────────────────────────
-configurationsFile   = "/project/irace_prostate/init_config.txt"
+configurationsFile   = "/project/irace_tabu/init_config.txt"
 
 # ── Semilla y output ──────────────────────────────────────────────────────
 seed                 = 42

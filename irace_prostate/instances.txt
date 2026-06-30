@@ -1,2 +1,3 @@
-/Users/marrojasr/Documents/code/emili_imrt/irace_prostate/instances/PROSTATE_sampled_K4
-/Users/marrojasr/Documents/code/emili_imrt/irace_prostate/instances/PROSTATE_sampled2_K4
+/project/instances/PROSTATE_tiny_S42
+/project/instances/PROSTATE_tiny_S123
+/project/instances/PROSTATE_tiny_S999

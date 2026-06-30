@@ -1,0 +1,48 @@
+# openspec/config.yaml
+schema: spec-driven
+
+context: |
+  C++11 metaheuristic framework (EMILI) + IMRT extension for radiotherapy BAO/FMO.
+  CMake ≥ 2.8, GCC ≥ 4.7 / Clang, OSQP optional for QP solver.
+  Framework + extension pattern: core in emilibase.h/.cpp, IMRT in imrt/.
+  Builder pattern for CLI runtime composition. irace hyperparameter tuning infra.
+  BSD 2-Clause license. Remote: github.com/marr109/EMILI-IMRT.
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Use DeliveryStrategy: ask-on-risk per user config
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Follow framework+extension pattern
+    - Document OSQP dependency gating (#ifdef WITH_OSQP)
+    - Keep new classes in imrt/ namespace emili::imrt
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+  apply:
+    - Follow existing code patterns emilibase.h hierarchy
+    - Use Doxygen-style comments (@brief, @param, @return)
+    - Naming: PascalCase classes, camelCase methods, snake_case members
+  verify:
+    test_command: ""
+    build_command: "cmake --build build"
+    coverage_threshold: 0
+    - Primary verification: cmake build succeeds
+    - No test framework available
+  archive:
+    - Warn before merging destructive deltas
+
+testing:
+  strict_tdd: false
+  runner: none
+  reason: "No test framework is configured in this C++11 CMake project. Build compilation is the primary verification mechanism."
+  unit: false
+  integration: false
+  e2e: false
+  coverage: false
+  linter: false
+  type_checker: false
+  formatter: false

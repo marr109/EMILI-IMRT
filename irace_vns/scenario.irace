@@ -1,11 +1,11 @@
 # ============================================================================
-# IRACE scenario — BAO ILS, PROSTATE_tiny instances (8 angles x 24 dimlets)
+# IRACE scenario — BAO VNS, PROSTATE_tiny instances (8 angles x 24 dimlets)
 # ============================================================================
 
-targetRunner         = "/project/irace_prostate/target-runner"
-trainInstancesFile   = "/project/irace_prostate/instances.txt"
-parameterFile        = "/project/irace_prostate/parameters.irace"
-logFile              = "/project/irace_prostate/results/irace.log"
+targetRunner         = "/project/irace_vns/target-runner"
+trainInstancesFile   = "/project/irace_vns/instances.txt"
+parameterFile        = "/project/irace_vns/parameters.irace"
+logFile              = "/project/irace_vns/results/irace.log"
 
 # ── Presupuesto ───────────────────────────────────────────────────────────
 maxTime              = 20000
@@ -15,7 +15,7 @@ targetRunnerTimeout  = 60
 parallel             = 4
 
 # ── Config inicial ────────────────────────────────────────────────────────
-configurationsFile   = "/project/irace_prostate/init_config.txt"
+configurationsFile   = "/project/irace_vns/init_config.txt"
 
 # ── Semilla y output ──────────────────────────────────────────────────────
 seed                 = 42

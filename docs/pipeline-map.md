@@ -1,0 +1,147 @@
+# EMILI IMRT — Mapa del Pipeline Completo
+
+```
+═══════════════════════════════════════════════════════════════════════════════
+                        FASE 0 — PREPARACIÓN
+═══════════════════════════════════════════════════════════════════════════════
+
+  PROSTATE_sampled (36 ángulos, 5652 dimlets, 2564 voxels)
+       │
+       ├──→ benchmark Fase 1: MEDIUM_test K=3,4,5
+       │        5 metaheurísticas × 3K = 15 corridas
+       │        Resultados en benchmark/*.txt
+       │
+       ├──→ benchmark Fase 2: PROSTATE K=4
+       │        ILS, VNS, TabuFixed, TabuAdaptive, Greedy
+       │        Resultados en benchmark/*PROSTATE*.txt
+       │
+       └──→ subsample_instance.py
+                │
+                ├──→ PROSTATE_tiny_S42  (8 áng, 192 dimlets, 256 vox)
+                ├──→ PROSTATE_tiny_S123
+                └──→ PROSTATE_tiny_S999
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                     FASE 1 — TUNING CON irace
+═══════════════════════════════════════════════════════════════════════════════
+
+  PROSTATE_tiny_S{42,123,999}
+       │
+       ├──────────────────────────────────────────────────────────────┐
+       │                      irace (R)                              │
+       │               Iterated Racing — 20000s/algo                  │
+       │                                                              │
+       │   ┌─────────────┐    ┌─────────────┐    ┌─────────────┐     │
+       │   │  ILS   🥇   │    │  VNS   🥈   │    │ Tabu   🥉   │     │
+       │   │ #323 pgreedy│    │ #540 irandk │    │ #321 fix=7  │     │
+       │   │ D=2 ifirstk │    │ p_max=2     │    │ w_over=0.04 │     │
+       │   │ w_over=0.17 │    │ w_over=0.19 │    │             │     │
+       │   └──────┬──────┘    └──────┬──────┘    └──────┬──────┘     │
+       │          │                 │                 │              │
+       └──────────┼─────────────────┼─────────────────┼──────────────┘
+                  │                 │                 │
+                  ▼                 ▼                 ▼
+          Config élite      Config élite      Config élite
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                FASE 2 — VALIDACIÓN EN PROSTATE REAL
+═══════════════════════════════════════════════════════════════════════════════
+
+  PROSTATE_sampled (36 ángulos, 5652 dimlets, 2564 voxels — INSTANCIA REAL)
+       │
+       ├──→ ILS #323  × 10 seeds (42-51) ──→ f* ≈ 4,230, V95% ≈ 96.2%
+       │    ILS baseline × 10 seeds       ──→ f* ≈ 9,000, V95% ≈ 86.3%
+       │         MEJORA: -53% f*, +9.9pp V95%  ✅
+       │
+       ├──→ VNS #540  × 10 seeds ──→ f* ≈ 4,750, V95% ≈ 95.5%
+       │    VNS baseline × 10 seeds ──→ f* ≈ 8,650, V95% ≈ 87.5%
+       │         MEJORA: -45% f*, +8.0pp V95%  ✅
+       │
+       ├──→ Tabu #321 × 10 seeds ──→ f* = 1,800, V95% = 98.4%
+       │    Tabu baseline × 10 seeds ──→ f* = 9,420, V95% = 86.2%
+       │         MEJORA: -81% f*, +12.2pp V95%  ✅  (determinístico)
+       │
+       ├──→ rVNS (ablación): VNS sin búsqueda local
+       │    f* = 4,878, V95% = 95.8%
+       │    Δ_LS = GVNS - rVNS = solo 1.8% → el shake es el motor real
+       │
+       └──→ Tabu adaptive (comparación): corriendo...
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                  FASE 3 — PRÓXIMOS PASOS
+═══════════════════════════════════════════════════════════════════════════════
+
+  □ Wilcoxon signed-rank test (tuned vs baseline, p < 0.05)
+  □ Validación cruzada en PROSTATE_sampled2
+  □ Tabla comparativa final con CI, HI, DVH constraints
+  □ Paper: discusión de resultados + patrones transversales
+
+
+═══════════════════════════════════════════════════════════════════════════════
+            DIAGRAMA DE FLUJO — UNA CORRIDA COMPLETA
+═══════════════════════════════════════════════════════════════════════════════
+
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │                         ENTRADA                                      │
+  │  36 ángulos × 157 dimlets × 2564 voxels × 3 órganos                 │
+  │  K = 4 ángulos activos                                              │
+  └────────────────────────────┬─────────────────────────────────────────┘
+                               │
+                               ▼
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │                     SOLUCIÓN INICIAL                                 │
+  │  ifirstk: [0°, 40°, 80°, 120°]                                      │
+  │  irandomk: 4 ángulos aleatorios                                     │
+  └────────────────────────────┬─────────────────────────────────────────┘
+                               │
+                               ▼
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │                    BÚSQUEDA LOCAL (LS)                               │
+  │  Probar vecinos: cambiar 1 ángulo por otro                          │
+  │  first: primer vecino que mejora → STOP                              │
+  │  best: evaluar TODOS los 128 vecinos → elegir el mejor              │
+  │  Cada vecino → 1 solve OSQP (~25s en PROSTATE)                      │
+  └────────────────────────────┬─────────────────────────────────────────┘
+                               │
+                               ▼
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │                      PERTURBACIÓN / SHAKE                            │
+  │  ILS: pgreedy D=2 (destruir 2, reconstruir greedy 67 solves)       │
+  │  VNS: bangshake (k+1 swaps aleatorios, 1-3 solves)                  │
+  │  Tabu: memoria tabu prohíbe soluciones recientes                    │
+  └────────────────────────────┬─────────────────────────────────────────┘
+                               │
+                               ▼ (repetir N iteraciones)
+                               │
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │                    SOLUCIÓN FINAL                                    │
+  │  Ángulos seleccionados + FMO + métricas clínicas                    │
+  │  f*, CI, HI, V95%, DVH constraints                                  │
+  └──────────────────────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════
+               INSTANCIAS — JERARQUÍA DE TAMAÑOS
+═══════════════════════════════════════════════════════════════════════════════
+
+  PROSTATE_all        180 áng, 28k dimlets     ~2-5 días/corrida   ❌ inviable
+  PROSTATE_36ang       36 áng, 5.6k dimlets    ~6-8h/corrida       ⚠️ validación
+  PROSTATE_sampled     36 áng, 5.6k dimlets    ~4-8h/corrida       ✅ validación
+  PROSTATE_sampled2    36 áng, 5.6k dimlets    ~4-8h/corrida       🔜 cross-val
+  MEDIUM_test          12 áng, 480 dimlets     ~2-5 min/corrida    ⚠️ descartado
+  PROSTATE_tiny         8 áng, 192 dimlets     ~3-7 seg/corrida    ✅ tuning
+
+
+═══════════════════════════════════════════════════════════════════════════════
+          RESULTADOS CLAVE — SEED 42 (PROSTATE REAL)
+═══════════════════════════════════════════════════════════════════════════════
+
+                    BASELINE                    TUNED (irace)
+                    ────────                    ─────────────
+  ILS          f* = 8,086   V95 = 89.4%       f* = 4,280   V95 = 96.2%  ⬇47%
+  VNS          f* = 8,176   V95 = 88.4%       f* = 4,792   V95 = 95.4%  ⬇41%
+  Tabu         f* = 8,072   V95 = 89.0%       f* = 1,800   V95 = 98.4%  ⬇78% 🥇
+  rVNS (abla)  —                               f* = 4,878   V95 = 95.8%  ΔLS=1.8%

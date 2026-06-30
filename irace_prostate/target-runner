@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# target-runner — wrapper IRACE para BAO+FMO (instancia PROSTATE real)
-# Instancia: PROSTATE_sampled (2554 vóxeles submuestreados de 36 ángulos)
+# target-runner — wrapper IRACE para BAO+FMO (MEDIUM_test, K=4)
 # Salida: "costo tiempo" (requerido cuando IRACE usa maxTime)
 #
 # Parámetros tuneables vía IRACE:
@@ -15,7 +14,7 @@
 # =============================================================================
 set -euo pipefail
 
-EMILI="$(cd "$(dirname "$0")/.." && pwd)/build/emili"
+EMILI="${EMILI:-$(cd "$(dirname "$0")/.." && pwd)/build/emili}"
 
 CONFIG_ID=$1; shift
 INSTANCE_ID=$1; shift
@@ -26,7 +25,9 @@ INSTANCE=$1; shift
 inner_explore="best"
 inner_init="ifirstk"
 inner_iter=1
+pert_type="prangswap"
 pert_swaps=1
+D=2
 outer_iter=2
 outer_accept="improve"
 w_under=1.0
@@ -38,7 +39,9 @@ while [[ $# -gt 0 ]]; do
         --inner_explore) inner_explore="$2"; shift 2 ;;
         --inner_init)    inner_init="$2";    shift 2 ;;
         --inner_iter)    inner_iter="$2";    shift 2 ;;
+        --pert_type)     pert_type="$2";     shift 2 ;;
         --pert_swaps)    pert_swaps="$2";    shift 2 ;;
+        --D)             D="$2";             shift 2 ;;
         --outer_iter)    outer_iter="$2";    shift 2 ;;
         --outer_accept)  outer_accept="$2";  shift 2 ;;
         --w_under)       w_under="$2";       shift 2 ;;
@@ -48,10 +51,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Extraer K desde el nombre de la instancia (PROSTATE_sampled_K4 → K=4)
-BASENAME=$(basename "$INSTANCE")
-K=$(echo "$BASENAME" | grep -oE 'K[0-9]+' | grep -oE '[0-9]+')
-[[ "$K" =~ ^[0-9]+$ ]] || K=4
+# K=4 hardcoded for consistency across all irace setups
+K=4
 
 # ── Crear instancia temporal con pesos tuneados (symlinks + config modificado) ──
 TEMP_INST=$(mktemp -d)
@@ -59,32 +60,39 @@ cleanup() { rm -rf "$TEMP_INST"; }
 trap 'cleanup; ELAPSED=$(( $(date +%s) - START_TIME )); echo "1e30 $ELAPSED"; exit 0' TERM INT
 trap 'cleanup' EXIT
 
-# Symlink a todos los archivos de datos (Gantry*_D.txt, VOILIST, etc.)
+# Copiar archivos de datos (Gantry*_D.txt, VOILIST, etc.) al temp
 for f in "$INSTANCE"/*; do
     fname=$(basename "$f")
     if [ "$fname" != "instance_config.txt" ]; then
-        ln -s "$f" "$TEMP_INST/$fname"
+        cp "$f" "$TEMP_INST/$fname"
     fi
 done
 
 # Copiar y modificar instance_config.txt con los pesos tuneados
 cp "$INSTANCE/instance_config.txt" "$TEMP_INST/instance_config.txt"
-sed -i '' "s/^w_under[[:space:]].*/w_under       $w_under/"     "$TEMP_INST/instance_config.txt"
-sed -i '' "s/^w_over[[:space:]].*/w_over        $w_over/"       "$TEMP_INST/instance_config.txt"
-sed -i '' "s/^w_ptv_over[[:space:]].*/w_ptv_over    $w_ptv_over/"   "$TEMP_INST/instance_config.txt"
+sed -i "s/^w_under[[:space:]].*/w_under       $w_under/"     "$TEMP_INST/instance_config.txt"
+sed -i "s/^w_over[[:space:]].*/w_over        $w_over/"       "$TEMP_INST/instance_config.txt"
+sed -i "s/^w_ptv_over[[:space:]].*/w_ptv_over    $w_ptv_over/"   "$TEMP_INST/instance_config.txt"
 
 START_TIME=$(date +%s)
+STDERR_LOG="$TEMP_INST/emili_stderr.log"
 
-OUTPUT=$("$EMILI" "$TEMP_INST" baoimrt "$K" \
-    ils "$inner_explore" "$inner_init" tmaxiter "$inner_iter" nangswap \
-    tmaxiter "$outer_iter" prangswap "$pert_swaps" "$outer_accept" \
-    rnds "$SEED" \
-    2>/dev/null) || true
+if [ "$pert_type" = "pgreedy" ]; then
+    OUTPUT=$("$EMILI" "$TEMP_INST" baoimrt "$K" \
+        ils "$inner_explore" "$inner_init" tmaxiter "$inner_iter" nangswap \
+        tmaxiter "$outer_iter" pgreedy "$D" "$outer_accept" \
+        rnds "$SEED" 2>"$STDERR_LOG") || true
+else
+    OUTPUT=$("$EMILI" "$TEMP_INST" baoimrt "$K" \
+        ils "$inner_explore" "$inner_init" tmaxiter "$inner_iter" nangswap \
+        tmaxiter "$outer_iter" prangswap "$pert_swaps" "$outer_accept" \
+        rnds "$SEED" 2>"$STDERR_LOG") || true
+fi
 
 END_TIME=$(date +%s)
 ELAPSED=$(( END_TIME - START_TIME ))
 
-RESULT=$(echo "$OUTPUT" | grep "Objective function value:" | awk '{print $NF}')
+RESULT=$(echo "$OUTPUT" | grep "Objective function value:" | tail -1 | awk '{print $NF}')
 
 if [[ -z "$RESULT" ]]; then
     echo "1e30 $ELAPSED"

@@ -1,22 +1,15 @@
 # ============================================================================
-# IRACE parameter file — BAO PROSTATE real, K=4 ángulos
-#
-# ILS con dos tipos de perturbación explorados conjuntamente:
-#   prangswap: random angle swap (parámetro: pert_swaps)
-#   pgreedy:   Iterated Greedy destruction/rebuild (parámetro: D)
+# IRACE parameter file — BAO VNS, MEDIUM_test K=4
 # ============================================================================
 
 # ── Inner local search ─────────────────────────────────────────────────────
 inner_explore  "--inner_explore "  c  (first)
 inner_init     "--inner_init "     c  (ifirstk, irandomk)
+inner_iter     "--inner_iter "     i  (1, 2)
 
-# ── Perturbation type (conditional parameters) ─────────────────────────────
-pert_type      "--pert_type "      c  (prangswap, pgreedy)
-pert_swaps     "--pert_swaps "     i  (1, 2)   | pert_type == "prangswap"
-D              "--D "              i  (1, 3)   | pert_type == "pgreedy"
-
-# ── ILS outer loop ─────────────────────────────────────────────────────────
+# ── VNS outer loop ─────────────────────────────────────────────────────────
 outer_iter     "--outer_iter "     i  (1, 3)
+p_max          "--p_max "          i  (1, 3)
 
 # ── Pesos de la función objetivo FMO ───────────────────────────────────────
 w_under        "--w_under "        r,log  (1.0, 1000.0)
