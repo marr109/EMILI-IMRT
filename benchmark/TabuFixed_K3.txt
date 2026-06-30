@@ -1,0 +1,74 @@
+	 ______ __  __ _____ _      _____ 
+	|  ____|  \/  |_   _| |    |_   _|
+	| |__  | \  / | | | | |      | |  
+	|  __| | |\/| | | | | |      | |  
+	| |____| |  | |_| |_| |____ _| |_ 
+	|______|_|  |_|_____|______|_____|
+
+commit : e5dffeb8ea6a4577658872eac6ae82376edd42e5
+Random seed : 42
+[IMRT] CORT instance loaded: 12/12 angles, 480 dimlets, 270 boxets, 3 organs.
+  directory : instances/MEDIUM_test
+  angles : 12
+  dimlets : 480
+  boxets : 270
+  organs : 3
+BAO problem (OSQP-exact FMO + busqueda de angulos)
+  K (angulos activos) : 3
+  TABU SEARCH
+      BAO initial solution: first K angles
+      termination: max iterations
+        max : 10
+      BAO neighborhood: angle swap
+      BAO tabu memory: fixed tenure on angle sets
+        tenure : 5
+The print option is not enabled
+
+Searching...
+time : 170.494
+iteration counter : 0
+4.90534e-07
+Objective function value: 0.000000
+0.000000
+Found solution: angles=[0,90,180deg] f=0.00
+
+================================================================
+  IMRT FMO RESULT   K=3 beams
+================================================================
+Selected angles (deg) : [ 0, 90, 180 ]
+FMO objective f*      : 0.00
+Prescription dose Rx  : 68.00 Gy
+
+----------------------------------------------------------------
+  Per-organ dose statistics  (Gy)
+----------------------------------------------------------------
+Structure    Voxels    Dmin   Dmean    Dmax     D95      D5      D2
+----------------------------------------------------------------
+PTV_68          150   69.03   71.26   76.48   69.21   73.66   74.48
+Bladder          60    4.41    4.83    5.33       -    5.10    5.11
+Rectum           60    4.59    4.89    5.19       -    5.16    5.16
+----------------------------------------------------------------
+
+----------------------------------------------------------------
+  DVH constraints  (clinical goals)
+----------------------------------------------------------------
+Structure  Metric          Goal        Achieved      Status
+----------------------------------------------------------------
+PTV_68     D95 >= 0.95*Rx  64.60       69.21         OK
+PTV_68     D2  <= 1.07*Rx  72.76       74.48         VIOL
+Bladder    Dmax <= limit   50.00       5.33          OK
+Bladder    V70 <= 25 %     25.00       0.00          OK
+Bladder    Dmean (info)    -           4.83          --
+Rectum     Dmax <= limit   50.00       5.19          OK
+Rectum     V70 <= 25 %     25.00       0.00          OK
+Rectum     Dmean (info)    -           4.89          --
+----------------------------------------------------------------
+
+----------------------------------------------------------------
+  Plan quality indices
+----------------------------------------------------------------
+Conformity Index    CI (V_Rx / V_PTV)    = 1.000
+Homogeneity Index   HI (D2 - D98)/D_Rx   = 0.079
+PTV coverage        V95% of Rx           = 100.00 %
+----------------------------------------------------------------
+DVH curves written to: dvh.csv

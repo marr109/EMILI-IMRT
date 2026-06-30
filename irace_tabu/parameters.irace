@@ -1,0 +1,24 @@
+# ============================================================================
+# IRACE parameter file — BAO Tabu Search, PROSTATE real, K=4
+#
+# Two tabu variants explored jointly via conditional parameters:
+#   fixed:    single tenure, class BaoTabuMemory
+#   adaptive: min/max tenure, class AdaptiveBaoTabuMemory (reactive)
+# ============================================================================
+
+tabu_type      "--tabu_type "      c  (fixed, adaptive)
+inner_explore  "--inner_explore "  c  (first)
+inner_init     "--inner_init "     c  (ifirstk, irandomk)
+max_iter       "--max_iter "       i  (5, 6)
+
+# ── Fixed tabu ─────────────────────────────────────────────────────────────
+tenure         "--tenure "         i  (1, 20)   | tabu_type == "fixed"
+
+# ── Adaptive tabu (reactive tenure) ────────────────────────────────────────
+tenure_min     "--tenure_min "     i  (1, 10)   | tabu_type == "adaptive"
+tenure_max     "--tenure_max "     i  (5, 25)   | tabu_type == "adaptive"
+
+# ── Pesos de la función objetivo FMO ───────────────────────────────────────
+w_under        "--w_under "        r,log  (1.0, 1000.0)
+w_over         "--w_over "         r,log  (0.01, 10.0)
+w_ptv_over     "--w_ptv_over "     r,log  (0.1, 50.0)

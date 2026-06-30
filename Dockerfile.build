@@ -1,0 +1,19 @@
+FROM gcc:14
+
+# ── Build tools + OSQP ────────────────────────────────────────────────────
+RUN apt-get update -qq && apt-get install -y -qq cmake git && \
+    cd /tmp && \
+    git clone --depth 1 --branch v1.0.0 https://github.com/osqp/osqp.git && \
+    cd osqp && mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local && \
+    make -j$(nproc) && make install && ldconfig && \
+    rm -rf /tmp/osqp
+
+# ── R + irace ─────────────────────────────────────────────────────────────
+RUN apt-get install -y -qq gfortran-14 libuv1-dev && \
+    ln -sf /usr/bin/gfortran-14 /usr/bin/gfortran && \
+    apt-get install -y -qq r-base && \
+    R -e 'install.packages("irace", repos="https://cloud.r-project.org")' && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /project

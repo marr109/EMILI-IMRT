@@ -1,15 +1,15 @@
 # ============================================================================
-# IRACE scenario — BAO ILS, PROSTATE_tiny instances (8 angles x 24 dimlets)
+# IRACE scenario — BAO PROSTATE real, K=4 (Docker-adapted)
 # ============================================================================
 
-targetRunner         = "/project/irace_prostate/target-runner"
-trainInstancesFile   = "/project/irace_prostate/instances.txt"
+targetRunner         = "/project/irace_prostate/target-runner-docker"
+trainInstancesFile   = "/project/irace_prostate/instances-docker.txt"
 parameterFile        = "/project/irace_prostate/parameters.irace"
 logFile              = "/project/irace_prostate/results/irace.log"
 
 # ── Presupuesto ───────────────────────────────────────────────────────────
 maxTime              = 20000
-targetRunnerTimeout  = 60
+targetRunnerTimeout  = 1500
 
 # ── Paralelismo ───────────────────────────────────────────────────────────
 parallel             = 4

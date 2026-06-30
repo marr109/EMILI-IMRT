@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # =============================================================================
-# target-runner — wrapper IRACE para BAO+FMO (MEDIUM_test, K=4)
-# Salida: "costo tiempo" (requerido cuando IRACE usa maxTime)
+# target-runner — IRACE wrapper for BAO + VNS (PROSTATE real, K=4)
 #
-# Parámetros tuneables vía IRACE:
-#   --inner_explore  {first,best}      estrategia de búsqueda local
-#   --inner_init     {ifirstk,irandomk} solución inicial BAO
-#   --pert_swaps     {1,2}             swaps en perturbación ILS
-#   --outer_iter     {1..3}            iteraciones externas (reinicios)
-#   --w_under        [1..1000]         peso penalización subdosis PTV
-#   --w_over         [0.01..10]        peso penalización sobredosis OAR
-#   --w_ptv_over     [0.1..50]         peso penalización sobredosis PTV
+# Tuneable parameters:
+#   --inner_explore  {first,best}       inner local search strategy
+#   --inner_init     {ifirstk,irandomk} BAO initial solution
+#   --inner_iter     {1..3}             inner LS max iterations
+#   --outer_iter     {1..5}             VNS outer loop iterations
+#   --p_max          {1..5}             shake max strength
+#   --w_under        [1..1000]          PTV underdose penalty
+#   --w_over         [0.01..10]         OAR overdose penalty
+#   --w_ptv_over     [0.1..50]          PTV hotspot penalty
 # =============================================================================
 set -euo pipefail
 
@@ -21,15 +21,12 @@ INSTANCE_ID=$1; shift
 SEED=$1; shift
 INSTANCE=$1; shift
 
-# Defaults (valores de la instancia original como punto de partida)
+# Defaults (baseline from benchmark)
 inner_explore="best"
 inner_init="ifirstk"
 inner_iter=1
-pert_type="prangswap"
-pert_swaps=1
-D=2
 outer_iter=2
-outer_accept="improve"
+p_max=2
 w_under=1.0
 w_over=0.5
 w_ptv_over=0.5
@@ -39,11 +36,8 @@ while [[ $# -gt 0 ]]; do
         --inner_explore) inner_explore="$2"; shift 2 ;;
         --inner_init)    inner_init="$2";    shift 2 ;;
         --inner_iter)    inner_iter="$2";    shift 2 ;;
-        --pert_type)     pert_type="$2";     shift 2 ;;
-        --pert_swaps)    pert_swaps="$2";    shift 2 ;;
-        --D)             D="$2";             shift 2 ;;
         --outer_iter)    outer_iter="$2";    shift 2 ;;
-        --outer_accept)  outer_accept="$2";  shift 2 ;;
+        --p_max)         p_max="$2";         shift 2 ;;
         --w_under)       w_under="$2";       shift 2 ;;
         --w_over)        w_over="$2";        shift 2 ;;
         --w_ptv_over)    w_ptv_over="$2";    shift 2 ;;
@@ -51,16 +45,15 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# K=4 hardcoded for consistency across all irace setups
+# K=4 hardcoded for prostate
 K=4
 
-# ── Crear instancia temporal con pesos tuneados (symlinks + config modificado) ──
+# ── Temp instance with tuned weights ───────────────────────────────────────
 TEMP_INST=$(mktemp -d)
 cleanup() { rm -rf "$TEMP_INST"; }
 trap 'cleanup; ELAPSED=$(( $(date +%s) - START_TIME )); echo "1e30 $ELAPSED"; exit 0' TERM INT
 trap 'cleanup' EXIT
 
-# Copiar archivos de datos (Gantry*_D.txt, VOILIST, etc.) al temp
 for f in "$INSTANCE"/*; do
     fname=$(basename "$f")
     if [ "$fname" != "instance_config.txt" ]; then
@@ -68,7 +61,6 @@ for f in "$INSTANCE"/*; do
     fi
 done
 
-# Copiar y modificar instance_config.txt con los pesos tuneados
 cp "$INSTANCE/instance_config.txt" "$TEMP_INST/instance_config.txt"
 sed -i "s/^w_under[[:space:]].*/w_under       $w_under/"     "$TEMP_INST/instance_config.txt"
 sed -i "s/^w_over[[:space:]].*/w_over        $w_over/"       "$TEMP_INST/instance_config.txt"
@@ -77,17 +69,10 @@ sed -i "s/^w_ptv_over[[:space:]].*/w_ptv_over    $w_ptv_over/"   "$TEMP_INST/ins
 START_TIME=$(date +%s)
 STDERR_LOG="$TEMP_INST/emili_stderr.log"
 
-if [ "$pert_type" = "pgreedy" ]; then
-    OUTPUT=$("$EMILI" "$TEMP_INST" baoimrt "$K" \
-        ils "$inner_explore" "$inner_init" tmaxiter "$inner_iter" nangswap \
-        tmaxiter "$outer_iter" pgreedy "$D" "$outer_accept" \
-        rnds "$SEED" 2>"$STDERR_LOG") || true
-else
-    OUTPUT=$("$EMILI" "$TEMP_INST" baoimrt "$K" \
-        ils "$inner_explore" "$inner_init" tmaxiter "$inner_iter" nangswap \
-        tmaxiter "$outer_iter" prangswap "$pert_swaps" "$outer_accept" \
-        rnds "$SEED" 2>"$STDERR_LOG") || true
-fi
+OUTPUT=$("$EMILI" "$TEMP_INST" baoimrt "$K" \
+    vns "$inner_explore" "$inner_init" tmaxiter "$inner_iter" nangswap \
+    tmaxiter "$outer_iter" bangshake "$p_max" accng improve \
+    rnds "$SEED" 2>"$STDERR_LOG") || true
 
 END_TIME=$(date +%s)
 ELAPSED=$(( END_TIME - START_TIME ))

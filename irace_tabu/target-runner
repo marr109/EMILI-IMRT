@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# =============================================================================
+# target-runner — IRACE wrapper for BAO + Tabu Search (PROSTATE real, K=4)
+#
+# Supports both fixed and adaptive tabu via conditional parameters.
+#
+# Tuneable parameters:
+#   --tabu_type      {fixed,adaptive}   tabu memory variant
+#   --inner_explore  {first,best}       tabu search strategy
+#   --inner_init     {ifirstk,irandomk} BAO initial solution
+#   --max_iter       {5..30}            max iterations
+#   --tenure         {1..20}            fixed tabu tenure (fixed only)
+#   --tenure_min     {1..10}            min tenure (adaptive only)
+#   --tenure_max     {5..25}            max tenure (adaptive only)
+#   --w_under        [1..1000]          PTV underdose penalty
+#   --w_over         [0.01..10]         OAR overdose penalty
+#   --w_ptv_over     [0.1..50]          PTV hotspot penalty
+# =============================================================================
+set -euo pipefail
+
+EMILI="${EMILI:-$(cd "$(dirname "$0")/.." && pwd)/build/emili}"
+
+CONFIG_ID=$1; shift
+INSTANCE_ID=$1; shift
+SEED=$1; shift
+INSTANCE=$1; shift
+
+# Defaults (baseline from benchmark)
+tabu_type="fixed"
+inner_explore="best"
+inner_init="ifirstk"
+max_iter=10
+tenure=5
+tenure_min=2
+tenure_max=8
+w_under=1.0
+w_over=0.5
+w_ptv_over=0.5
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --tabu_type)      tabu_type="$2";      shift 2 ;;
+        --inner_explore)  inner_explore="$2";  shift 2 ;;
+        --inner_init)     inner_init="$2";     shift 2 ;;
+        --max_iter)       max_iter="$2";       shift 2 ;;
+        --tenure)         tenure="$2";         shift 2 ;;
+        --tenure_min)     tenure_min="$2";     shift 2 ;;
+        --tenure_max)     tenure_max="$2";     shift 2 ;;
+        --w_under)        w_under="$2";        shift 2 ;;
+        --w_over)         w_over="$2";         shift 2 ;;
+        --w_ptv_over)     w_ptv_over="$2";     shift 2 ;;
+        *) shift ;;
+    esac
+done
+
+# K=4 hardcoded for prostate
+K=4
+
+# ── Temp instance with tuned weights ───────────────────────────────────────
+TEMP_INST=$(mktemp -d)
+cleanup() { rm -rf "$TEMP_INST"; }
+trap 'cleanup; ELAPSED=$(( $(date +%s) - START_TIME )); echo "1e30 $ELAPSED"; exit 0' TERM INT
+trap 'cleanup' EXIT
+
+for f in "$INSTANCE"/*; do
+    fname=$(basename "$f")
+    if [ "$fname" != "instance_config.txt" ]; then
+        cp "$f" "$TEMP_INST/$fname"
+    fi
+done
+
+cp "$INSTANCE/instance_config.txt" "$TEMP_INST/instance_config.txt"
+sed -i "s/^w_under[[:space:]].*/w_under       $w_under/"     "$TEMP_INST/instance_config.txt"
+sed -i "s/^w_over[[:space:]].*/w_over        $w_over/"       "$TEMP_INST/instance_config.txt"
+sed -i "s/^w_ptv_over[[:space:]].*/w_ptv_over    $w_ptv_over/"   "$TEMP_INST/instance_config.txt"
+
+START_TIME=$(date +%s)
+STDERR_LOG="$TEMP_INST/emili_stderr.log"
+
+if [ "$tabu_type" = "fixed" ]; then
+    OUTPUT=$("$EMILI" "$TEMP_INST" baoimrt "$K" \
+        tabu "$inner_explore" "$inner_init" tmaxiter "$max_iter" nangswap \
+        TBao_fixed "$tenure" \
+        rnds "$SEED" 2>"$STDERR_LOG") || true
+else
+    # Ensure tenure_min <= tenure_max
+    if [ "$tenure_min" -gt "$tenure_max" ]; then
+        tmp=$tenure_min; tenure_min=$tenure_max; tenure_max=$tmp
+    fi
+    OUTPUT=$("$EMILI" "$TEMP_INST" baoimrt "$K" \
+        tabu "$inner_explore" "$inner_init" tmaxiter "$max_iter" nangswap \
+        TBao_adaptive "$tenure_min" "$tenure_max" \
+        rnds "$SEED" 2>"$STDERR_LOG") || true
+fi
+
+END_TIME=$(date +%s)
+ELAPSED=$(( END_TIME - START_TIME ))
+
+RESULT=$(echo "$OUTPUT" | grep "Objective function value:" | tail -1 | awk '{print $NF}')
+
+if [[ -z "$RESULT" ]]; then
+    echo "1e30 $ELAPSED"
+else
+    echo "$RESULT $ELAPSED"
+fi

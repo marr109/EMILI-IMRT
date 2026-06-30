@@ -70,9 +70,19 @@ xcuserdata/
  
 # Generated files
 /web-app/WEB-INF
+
+# SDD artifacts
+.atl/
 build/
 *.[oa]
 *.pyc
+
+# Instance data (large datasets distributed via GitHub Releases)
+/instances/
+
+# Compressed release archives (keep out of git)
+*.tar.gz
+*.zip
  
 # Other source repository archive directories (protects when importing)
 .hg
@@ -92,4 +102,5 @@ Backup[ ]of[ ]*.numbers/
 # Logs and databases #
 *.log
 *.txt
+!benchmark/*.txt
 *.mat

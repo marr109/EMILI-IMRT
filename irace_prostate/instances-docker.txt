@@ -1,0 +1,2 @@
+/project/instances/PROSTATE_sampled
+/project/instances/PROSTATE_sampled2
