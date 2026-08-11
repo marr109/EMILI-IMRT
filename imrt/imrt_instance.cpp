@@ -365,7 +365,7 @@ bool ImrtInstance::loadAngleDijFileCort(const std::string& file_path, int angle_
 // reportPlan — literature-style clinical summary of a fluence map.
 //
 // Output layout (per ICRU-83 conventions):
-//   Header block  : instance summary, K, selected angles, objective, OSQP info
+//   Header block  : instance summary, K, selected angles, objective, solver info
 //   Per-organ     : Dmin, Dmean, Dmax, D95, D5, D2  (Gy)
 //   Constraints   : DVH goals vs achieved (Status OK / VIOL)
 //   Indices       : CI (V_Rx / V_PTV), HI = (D2 - D98) / D_Rx, V95% coverage

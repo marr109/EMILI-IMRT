@@ -106,15 +106,21 @@ Dose deposition data is stored in the **CORT format** — one VOIList per organ 
 
 - C++11 compiler (gcc ≥ 4.7 or Clang)
 - CMake ≥ 2.8
-- [OSQP](https://osqp.org/) (`brew install osqp` on macOS)
 
 ### Build
 
 ```bash
 mkdir build && cd build
-cmake .. -DWITH_OSQP=ON
+cmake ..
 make -j$(nproc)
 ```
+
+> **Note:** on this branch the FMO solver (`imrt/imrt_fmo.cpp`) is a stub
+> that fails loudly at runtime — the OSQP-based implementation was removed
+> in favor of a separate AMPL+Gurobi track (see `ampl_gurobi/`). The binary
+> still builds and `baoimrt` still parses, but any run that reaches
+> `ImrtFmoSolver::solve()` will print an error and return a worst-case
+> objective instead of solving anything.
 
 The binary is `build/emili`.
 
@@ -308,7 +314,6 @@ emili_imrt/
 
 | CMake flag | Default | Description |
 |---|---|---|
-| `WITH_OSQP` | OFF | Enable BAO+FMO (requires OSQP library) |
 | `DEBUG_FLAGS` | ON | Debug symbols (`-g`) |
 | `O3_FLAGS` | OFF | `-O3` optimization |
 | `IRACE_OPTIMISED_FLAGS` | OFF | irace-tuned GCC flags |

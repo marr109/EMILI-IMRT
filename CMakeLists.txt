@@ -4,7 +4,6 @@ aux_source_directory(. SRC_LIST)
 aux_source_directory(./imrt SRC_LIST)
 #aux_source_directory(./template SRC_LIST)
 
-option(WITH_OSQP "Enable BAO outer loop with OSQP-based FMO solver" OFF)
 option(USE_SSE "Use SSE compile path if available" OFF)
 option(USE_NEW_MAIN "Use new loading paradigm" ON)
 option(WITH_STATS "Print solution informations" ON)
@@ -99,19 +98,6 @@ else ()
 endif ()
 
 add_executable(${PROJECT_NAME} ${SRC_LIST})
-
-# ── OSQP integration ──────────────────────────────────────────────────────────
-if(WITH_OSQP)
-    find_package(osqp QUIET)
-    if(osqp_FOUND)
-        message(STATUS "OSQP found — BAO/FMO solver enabled")
-        add_definitions(-DWITH_OSQP)
-        target_link_libraries(${PROJECT_NAME} osqp::osqp)
-    else()
-        message(STATUS "OSQP not found — install via 'brew install osqp' then reconfigure")
-        message(STATUS "BAO/FMO solver disabled")
-    endif()
-endif()
 
 if(WRITE_COMMIT_ID)
     add_dependencies(${PROJECT_NAME} GNUM)

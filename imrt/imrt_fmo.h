@@ -1,13 +1,9 @@
 #ifndef IMRT_FMO_H
 #define IMRT_FMO_H
 
-#ifdef WITH_OSQP
-
 #include "imrt_instance.h"
 #include <vector>
 #include <utility>
-
-#include <osqp.h>
 
 namespace emili {
 namespace imrt {
@@ -15,9 +11,18 @@ namespace imrt {
 /**
  * ImrtFmoSolver
  *
- * Solves the continuous quadratic FMO sub-problem exactly using OSQP.
+ * FMO solver — REMOVED from this branch.
  *
- * QP formulation  (z = [x_active; u_ptv; v_oar]):
+ * The exact OSQP-based implementation has been removed here in favor of an
+ * AMPL+Gurobi track built separately under ampl_gurobi/ (see that directory
+ * for the working replacement). solve() below is a stub that fails loudly
+ * (logs an error and returns a worst-case sentinel objective) so that BAO
+ * still compiles/links but cannot silently produce wrong results.
+ *
+ * The full OSQP implementation remains available on the `develop` branch.
+ *
+ * Below is the QP formulation this solver used to solve exactly
+ * (z = [x_active; u_ptv; v_oar]):
  *
  *   min   w_under * ||u||^2  +  w_over * ||v||^2  [+  w_ptv_over * ||w||^2]
  *   s.t.  D_ptv * x + u  >=  Dmin          (PTV underdose slack)
@@ -74,5 +79,4 @@ private:
 } // namespace imrt
 } // namespace emili
 
-#endif // WITH_OSQP
 #endif // IMRT_FMO_H

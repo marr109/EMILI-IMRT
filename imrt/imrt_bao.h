@@ -1,8 +1,6 @@
 #ifndef IMRT_BAO_H
 #define IMRT_BAO_H
 
-#ifdef WITH_OSQP
-
 #include "../emilibase.h"
 #include "imrt_instance.h"
 #include "imrt_fmo.h"
@@ -18,8 +16,9 @@ namespace imrt {
  *                            BAO SOLUTION                                   *
  *                                                                           *
  * A BaoSolution represents a selection of K gantry angles (the outer BAO   *
- * decision) together with the OSQP-optimal beamlet intensities for that     *
- * selection (the inner FMO result).                                         *
+ * decision) together with the FMO-optimal beamlet intensities for that     *
+ * selection (the inner FMO result). NOTE: on this branch the FMO solver    *
+ * is stubbed out — see imrt_fmo.h / ampl_gurobi/.                          *
  *---------------------------------------------------------------------------*/
 class BaoSolution : public emili::Solution {
 public:
@@ -53,8 +52,8 @@ public:
  *                             BAO PROBLEM                                   *
  *                                                                           *
  * BaoProblem wraps ImrtFmoSolver.  Evaluating a BaoSolution means calling   *
- * OSQP to optimise beamlet intensities for the given angle subset, then     *
- * storing the result back into the solution.                                *
+ * the FMO solver to optimise beamlet intensities for the given angle       *
+ * subset, then storing the result back into the solution.                   *
  *---------------------------------------------------------------------------*/
 class BaoProblem : public emili::Problem {
     struct CachedFmoResult {
@@ -281,8 +280,8 @@ public:
  *                  GREEDY ANGLES PERTURBATION (Iterated Greedy)             *
  *                                                                           *
  * Destroys D randomly chosen active angles, then reconstructs them          *
- * greedily: at each step, every inactive candidate is evaluated via OSQP   *
- * and the one minimising the FMO objective is added.                        *
+ * greedily: at each step, every inactive candidate is evaluated via the    *
+ * FMO solver and the one minimising the FMO objective is added.             *
  *---------------------------------------------------------------------------*/
 class GreedyAnglesPerturbation : public emili::Perturbation {
     BaoProblem& bao_;
@@ -298,5 +297,4 @@ public:
 } // namespace imrt
 } // namespace emili
 
-#endif // WITH_OSQP
 #endif // IMRT_BAO_H

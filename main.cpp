@@ -15,9 +15,7 @@
 #include "imrt/imrt_builder.h"
 #include "imrt/imrt.h"
 #include "imrt/imrt_instance.h"
-#ifdef WITH_OSQP
 #include "imrt/imrt_bao.h"
-#endif
 
 int main(int argc, char *argv[])
 {
@@ -70,7 +68,6 @@ int main(int argc, char *argv[])
 
             // ── Clinical-style plan report (ICRU-83 metrics) ──────────────────
             emili::Problem* prob = &ls->getInitialSolution().getProblem();
-#ifdef WITH_OSQP
             if (auto* bp = dynamic_cast<emili::imrt::BaoProblem*>(prob)) {
                 auto* bs = dynamic_cast<emili::imrt::BaoSolution*>(solution);
                 if (bs) {
@@ -81,7 +78,6 @@ int main(int argc, char *argv[])
                                             solval, deg, std::cout, "dvh.csv");
                 }
             } else
-#endif
             if (auto* ip = dynamic_cast<emili::imrt::ImrtProblem*>(prob)) {
                 auto* is = dynamic_cast<emili::imrt::ImrtSolution*>(solution);
                 if (is) {

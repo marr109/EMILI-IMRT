@@ -44,7 +44,6 @@ emili::imrt::ImrtProblem* ImrtBuilder::castProblem()
     return static_cast<emili::imrt::ImrtProblem*>(gp.getInstance());
 }
 
-#ifdef WITH_OSQP
 emili::imrt::BaoProblem* ImrtBuilder::castBaoProblem()
 {
     return dynamic_cast<emili::imrt::BaoProblem*>(gp.getInstance());
@@ -54,7 +53,6 @@ bool ImrtBuilder::isBaoProblem()
 {
     return castBaoProblem() != nullptr;
 }
-#endif
 
 /*---------------------------------------------------------------------------*
  * Problem identification
@@ -63,9 +61,7 @@ bool ImrtBuilder::isBaoProblem()
 bool ImrtBuilder::isCompatibleWith(char* problem_definition)
 {
     if (strcmp(problem_definition, PROBLEM_IMRT) == 0) return true;
-#ifdef WITH_OSQP
     if (strcmp(problem_definition, PROBLEM_BAO)  == 0) return true;
-#endif
     return false;
 }
 
@@ -91,23 +87,19 @@ emili::Problem* ImrtBuilder::openInstance()
     bool is_bao = false;
     int  K      = 0;
 
-#ifdef WITH_OSQP
     {
         char* kw = tm.peek();
         if (kw && strcmp(kw, PROBLEM_BAO) == 0)
             is_bao = true;
     }
-#endif
 
     // Instance directory lives at absolute token index 1 (argv[1]).
     char* dir = tm.tokenAt(1);
     tm.nextToken();   // consume the problem keyword ("imrt" or "baoimrt")
     prs::check(dir, "IMRT: expected path to instance directory");
 
-#ifdef WITH_OSQP
     if (is_bao)
         K = tm.getInteger();   // consume K (number of gantry angles to select)
-#endif
 
     emili::imrt::ImrtInstance inst;
     if (!inst.loadFromDirectory(dir)) {
@@ -121,19 +113,18 @@ emili::Problem* ImrtBuilder::openInstance()
     prs::printTabPlusOne("boxets",    inst.n_boxets_total);
     prs::printTabPlusOne("organs",    inst.organs.size());
 
-#ifdef WITH_OSQP
     if (is_bao) {
         if (K <= 0 || K > inst.n_angles) {
             std::cerr << "[BAO] K=" << K << " invalido para "
                       << inst.n_angles << " angulos\n";
             exit(-1);
         }
-        prs::printTab("BAO problem (OSQP-exact FMO + busqueda de angulos)");
+        prs::printTab("BAO problem (angle search — FMO solver stubbed on this branch, see ampl_gurobi/)");
         prs::printTabPlusOne("K (angulos activos)", K);
 
         emili::imrt::BaoProblem* prob = new emili::imrt::BaoProblem(inst, K);
         if (!prob->isReady()) {
-            std::cerr << "[BAO] OSQP setup failed\n";
+            std::cerr << "[BAO] FMO solver initialization failed\n";
             exit(-1);
         }
 
@@ -150,7 +141,6 @@ emili::Problem* ImrtBuilder::openInstance()
         }
         return prob;
     }
-#endif
 
     // Classic FMO problem
     prs::printTab("IMRT problem loaded");
@@ -177,7 +167,6 @@ emili::InitialSolution* ImrtBuilder::buildInitialSolution()
     prs::incrementTabLevel();
     emili::InitialSolution* init = nullptr;
 
-#ifdef WITH_OSQP
     if (isBaoProblem()) {
         emili::imrt::BaoProblem* prob = castBaoProblem();
         if (tm.checkToken(INIT_FIRSTK)) {
@@ -191,7 +180,6 @@ emili::InitialSolution* ImrtBuilder::buildInitialSolution()
         prs::decrementTabLevel();
         return init;
     }
-#endif
 
     emili::imrt::ImrtProblem* prob = castProblem();
 
@@ -225,7 +213,6 @@ emili::Neighborhood* ImrtBuilder::buildNeighborhood()
     prs::incrementTabLevel();
     emili::Neighborhood* neigh = nullptr;
 
-#ifdef WITH_OSQP
     if (isBaoProblem()) {
         emili::imrt::BaoProblem* prob = castBaoProblem();
         if (tm.checkToken(NEIGH_ANGSWAP)) {
@@ -241,7 +228,6 @@ emili::Neighborhood* ImrtBuilder::buildNeighborhood()
         prs::decrementTabLevel();
         return neigh;
     }
-#endif
 
     emili::imrt::ImrtProblem* prob = castProblem();
 
@@ -269,7 +255,6 @@ emili::Perturbation* ImrtBuilder::buildPerturbation()
     prs::incrementTabLevel();
     emili::Perturbation* pert = nullptr;
 
-#ifdef WITH_OSQP
     if (isBaoProblem()) {
         emili::imrt::BaoProblem* prob = castBaoProblem();
         if (tm.checkToken(PERT_ANGSWAP)) {
@@ -287,7 +272,6 @@ emili::Perturbation* ImrtBuilder::buildPerturbation()
         prs::decrementTabLevel();
         return pert;
     }
-#endif
 
     emili::imrt::ImrtProblem* prob = castProblem();
 
@@ -364,7 +348,6 @@ emili::TabuMemory* ImrtBuilder::buildTabuTenure()
         prs::printTabPlusOne("tenure", tenure);
         mem = new emili::imrt::ImrtTabuMemory(tenure);
     }
-#ifdef WITH_OSQP
     else if (tm.checkToken(TABU_BAO_FIXED)) {
         int tenure = tm.getInteger();
         prs::printTab("BAO tabu memory: fixed tenure on angle sets");
@@ -379,7 +362,6 @@ emili::TabuMemory* ImrtBuilder::buildTabuTenure()
         prs::printTabPlusOne("tenure_max", tmax);
         mem = new emili::imrt::AdaptiveBaoTabuMemory(tmin, tmax);
     }
-#endif
 
     prs::decrementTabLevel();
     return mem;
@@ -394,7 +376,6 @@ emili::Shake* ImrtBuilder::buildShake()
     prs::incrementTabLevel();
     emili::Shake* sh = nullptr;
 
-#ifdef WITH_OSQP
     if (isBaoProblem()) {
         emili::imrt::BaoProblem* prob = castBaoProblem();
         if (tm.checkToken(SHAKE_BANGSHAKE)) {
@@ -406,7 +387,6 @@ emili::Shake* ImrtBuilder::buildShake()
         prs::decrementTabLevel();
         return sh;
     }
-#endif
 
     prs::decrementTabLevel();
     return sh;

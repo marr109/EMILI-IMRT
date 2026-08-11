@@ -1,7 +1,5 @@
 #include "imrt_bao.h"
 
-#ifdef WITH_OSQP
-
 #include "../emilibase.h"
 #include <algorithm>
 #include <fstream>
@@ -86,7 +84,7 @@ double BaoProblem::calcObjectiveFunctionValue(emili::Solution& s)
     // Devuelve par<intensidades, valor_objetivo>
     auto res = fmo_.solve(bs.active_angles_);
 
-    // Guarda objetivo e intensidades para evitar futuras llamadas idénticas a OSQP.
+    // Guarda objetivo e intensidades para evitar futuras llamadas idénticas al solver FMO.
     CachedFmoResult entry;
     entry.intensities = std::move(res.first);
     entry.objective = res.second;
@@ -428,8 +426,8 @@ emili::Solution* AngleShiftNeighborhood::computeStep(emili::Solution* step)
         bs->active_angles_ = base_angles_;
         bs->active_angles_[cur_active_idx_] = candidate;
 
-        // evaluateSolution consulta primero la caché FMO. OSQP solo se ejecuta
-        // si este conjunto de ángulos todavía no fue evaluado.
+        // evaluateSolution consulta primero la caché FMO. El solver FMO solo se
+        // ejecuta si este conjunto de ángulos todavía no fue evaluado.
         bao_.evaluateSolution(*bs);
         return bs;
     }
@@ -658,5 +656,3 @@ void AdaptiveBaoTabuMemory::forbid(emili::Solution* s)
 
 } // namespace imrt
 } // namespace emili
-
-#endif // WITH_OSQP
