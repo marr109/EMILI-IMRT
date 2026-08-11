@@ -104,3 +104,7 @@ Backup[ ]of[ ]*.numbers/
 *.txt
 !benchmark/*.txt
 *.mat
+
+# AMPL/Gurobi exploration
+ampl_gurobi/.venv/
+*.lic
