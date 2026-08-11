@@ -108,3 +108,4 @@ Backup[ ]of[ ]*.numbers/
 # AMPL/Gurobi exploration
 ampl_gurobi/.venv/
 *.lic
+!ampl_gurobi/*.mod
