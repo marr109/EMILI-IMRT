@@ -35,6 +35,8 @@ namespace imrt {
  *
  * ── BAO neighborhoods ─────────────────────────────────────────────────────
  *   nangswap               AngleSwapNeighborhood (swap one active ↔ inactive)
+ *   nangshift <step>       AngleShiftNeighborhood (shift active angle ±step
+ *                           positions along the degree-sorted catalog)
  *
  * ── Perturbations ─────────────────────────────────────────────────────────
  *   prandom  <k> <max>     RandomBeamletPerturbation

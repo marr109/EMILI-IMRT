@@ -7,6 +7,7 @@
 #include "imrt_instance.h"
 #include "imrt_fmo.h"
 #include <fstream>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -56,16 +57,24 @@ public:
  * storing the result back into the solution.                                *
  *---------------------------------------------------------------------------*/
 class BaoProblem : public emili::Problem {
+    struct CachedFmoResult {
+        std::vector<double> intensities;
+        double objective;
+    };
+
     ImrtInstance   inst_;   // owned copy (ImrtFmoSolver holds a ref to this)
     ImrtFmoSolver  fmo_;
     int            K_;
     bool           verbose_;
     std::ofstream  csv_file_;
     int            eval_count_;
+    std::map<std::vector<int>, CachedFmoResult> fmo_cache_;
+    bool           last_eval_cached_;
 
 public:
     BaoProblem(ImrtInstance& inst, int K)
-        : inst_(inst), fmo_(inst_), K_(K), verbose_(false), eval_count_(0) {}
+        : inst_(inst), fmo_(inst_), K_(K), verbose_(false), eval_count_(0)
+        , last_eval_cached_(false) {}
 
     virtual double calcObjectiveFunctionValue(emili::Solution& s) override;
     virtual double evaluateSolution(emili::Solution& s) override;
@@ -131,6 +140,50 @@ public:
     explicit AngleSwapNeighborhood(BaoProblem& p)
         : bao_(p), n_angles_(p.getInstance().n_angles)
         , cur_active_idx_(0), cur_inactive_idx_(0), first_(true)
+    {}
+
+    virtual emili::Neighborhood::NeighborhoodIterator
+            begin(emili::Solution* base) override;
+    virtual void reset() override;
+    virtual emili::Solution* random(emili::Solution* s) override;
+    virtual int size() override;
+};
+
+/*---------------------------------------------------------------------------*
+ *                         ANGLE-SHIFT NEIGHBORHOOD                          *
+ *                                                                           *
+ * Mueve un ángulo activo ±`step` posiciones dentro del catálogo ordenado    *
+ * por valor de grado real (no por índice crudo del array, que está en      *
+ * orden lexicográfico de string). El desplazamiento es circular: después   *
+ * del último ángulo (mayor grado) se vuelve al primero (0°), ya que el     *
+ * gantry rota en un círculo continuo de 360°.                              *
+ * Tamaño (cota superior) = 2 × K.                                          *
+ *---------------------------------------------------------------------------*/
+class AngleShiftNeighborhood : public emili::Neighborhood {
+    BaoProblem& bao_;
+    int         n_angles_;
+    int         step_;
+
+    // Permutación de índices de catálogo ordenados por grado ascendente,
+    // y su lookup inverso (índice de catálogo -> posición en degree_order_)
+    std::vector<int> degree_order_;
+    std::vector<int> degree_rank_;
+
+    // Estado para la iteración
+    std::vector<int> base_angles_;   // ángulos activos al llamar begin()
+    int  cur_active_idx_;            // qué ángulo activo se está desplazando
+    int  cur_dir_;                   // 0 = -step, 1 = +step
+    bool first_;
+
+    void buildDegreeOrder();
+
+    virtual emili::Solution* computeStep(emili::Solution* step)  override;
+    virtual void reverseLastMove(emili::Solution* step)           override;
+
+public:
+    explicit AngleShiftNeighborhood(BaoProblem& p, int step = 1)
+        : bao_(p), n_angles_(p.getInstance().n_angles), step_(step)
+        , cur_active_idx_(0), cur_dir_(0), first_(true)
     {}
 
     virtual emili::Neighborhood::NeighborhoodIterator

@@ -37,6 +37,7 @@ void ImrtFmoSolver::precompute()
         ptv_row_off_[i] = n_ptv_;
         n_ptv_ += inst.organs[ptv_orgs_[i]].n_boxets;
     }
+    
     for (int i = 0; i < (int)oar_orgs_.size(); ++i) {
         oar_row_off_[i] = n_oar_;
         n_oar_ += inst.organs[oar_orgs_[i]].n_boxets;

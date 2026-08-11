@@ -14,6 +14,7 @@
 #define NEIGH_SHIFT     "nshift"
 #define NEIGH_SWAP      "nswap"
 #define NEIGH_ANGSWAP   "nangswap"
+#define NEIGH_ANGSHIFT  "nangshift"
 #define PERT_RANDOM     "prandom"
 #define PERT_ANGSWAP    "prangswap"
 #define ACC_IMPROVE     "aimprove"
@@ -230,6 +231,12 @@ emili::Neighborhood* ImrtBuilder::buildNeighborhood()
         if (tm.checkToken(NEIGH_ANGSWAP)) {
             prs::printTab("BAO neighborhood: angle swap");
             neigh = new emili::imrt::AngleSwapNeighborhood(*prob);
+        }
+        else if (tm.checkToken(NEIGH_ANGSHIFT)) {
+            int step = tm.getInteger();
+            prs::printTab("BAO neighborhood: angle shift");
+            prs::printTabPlusOne("step", step);
+            neigh = new emili::imrt::AngleShiftNeighborhood(*prob, step);
         }
         prs::decrementTabLevel();
         return neigh;

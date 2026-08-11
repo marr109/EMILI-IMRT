@@ -14,16 +14,6 @@ class ImrtSolution; // forward declaration
  *                              PROBLEM                                      *
  *---------------------------------------------------------------------------*/
 
-/**
- * ImrtProblem
- *
- * Wraps the IMRT instance and evaluates the quadratic penalty objective:
- *
- *   f(x) = w_under * Σ_{b∈PTV}  max(0, Dmin − d_b)²
- *         + w_over  * Σ_{o∈OARs} Σ_{b∈o} max(0, d_b − Dmax_o)²
- *
- * where d_b = Σ_j D[b,j] · x[j]  (computed via ImrtInstance::computeOrganDoses).
- */
 class ImrtProblem : public emili::Problem {
 protected:
     ImrtInstance      instance_;
