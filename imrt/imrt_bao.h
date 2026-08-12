@@ -2,7 +2,6 @@
 #define IMRT_BAO_H
 
 #include "../emilibase.h"
-#include "imrt_instance.h"
 #include "imrt_fmo.h"
 #include "imrt_fmo_source.h"
 #include <fstream>
@@ -87,12 +86,6 @@ public:
     int  nAngles()               const { return (int)angle_degrees_.size(); }
     int  angleDegree(int idx)    const { return angle_degrees_[idx]; }
     int  nDimlets()               const { return source_->n_dimlets(); }
-
-    // Non-null only when this BaoProblem is backed by a CORT/old-format
-    // ImrtInstance -- lets main.cpp still produce the clinical DVH report
-    // (reportPlan) for that path without coupling BaoProblem itself to
-    // ImrtInstance for CERR-backed instances, which have none.
-    const ImrtInstance* getCortInstance() const;
 
     void setVerbose(bool v) { verbose_ = v; }
     bool isReady()          const { return fmo_.isReady(); }

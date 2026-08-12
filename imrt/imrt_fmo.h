@@ -28,10 +28,9 @@ namespace imrt {
  * The QP is built at each solve() call using only the K active angles'
  * beamlets (K x per_angle variables instead of n_candidates x per_angle).
  *
- * Depends on IFmoDataSource rather than a concrete instance format, so the
- * same solver serves both ImrtInstanceFmoSource (CORT/old format, fixed
- * beamlets per angle) and CerrFmoSource (CERR export, variable beamlets
- * per angle).
+ * Depends on IFmoDataSource rather than a concrete instance format, so this
+ * solver stays agnostic to on-disk layout details such as CerrFmoSource's
+ * variable beamlet count per angle.
  *
  * Keeps a persistent ampl::AMPL member (environment + model read once in
  * the constructor) since BAO calls solve() potentially thousands of times;

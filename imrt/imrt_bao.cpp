@@ -10,12 +10,6 @@
 namespace emili {
 namespace imrt {
 
-const ImrtInstance* BaoProblem::getCortInstance() const
-{
-    auto* cort = dynamic_cast<const ImrtInstanceFmoSource*>(source_.get());
-    return cort ? &cort->instance() : nullptr;
-}
-
 //=== Representación de solución ===============================================
 
 emili::Solution* BaoSolution::clone()

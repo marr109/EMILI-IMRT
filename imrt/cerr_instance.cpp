@@ -57,6 +57,7 @@ CerrFmoSource::CerrFmoSource(const std::string& dir)
 
         double dmin = (m.name == "PTVHD") ? dmin_ptvhd : dmin_ptvld;
         FmoOrganRef ref;
+        ref.name     = name;
         ref.is_ptv   = true;
         ref.n_boxets = m.n_boxets;
         ref.dmin     = dmin;
@@ -76,6 +77,7 @@ CerrFmoSource::CerrFmoSource(const std::string& dir)
 
         double dmax = (m.name == "BLADDER") ? dmax_bladder : dmax_rectum;
         FmoOrganRef ref;
+        ref.name     = name;
         ref.is_ptv   = false;
         ref.n_boxets = m.n_boxets;
         ref.dmin     = 0.0;

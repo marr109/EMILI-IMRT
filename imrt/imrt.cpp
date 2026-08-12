@@ -15,25 +15,28 @@ double ImrtProblem::calcObjectiveFunctionValue(emili::Solution &solution) {
   ImrtSolution &sol = static_cast<ImrtSolution &>(solution);
   const std::vector<double> &x = sol.getIntensities();
 
-  auto organ_doses = instance_.computeOrganDoses(x);
+  std::vector<double> ptv_dose, oar_dose;
+  source_->computeDoses(x, ptv_dose, oar_dose);
+
   double f = 0.0;
+  double w_under = source_->w_under();
+  double w_over  = source_->w_over();
 
-  for (int o = 0; o < static_cast<int>(instance_.organs.size()); ++o) {
-    const OrganData &org = instance_.organs[o];
-    const auto &dose = organ_doses[o];
+  int row = 0;
+  for (const FmoOrganRef &org : source_->ptvOrgans()) {
+    for (int b = 0; b < org.n_boxets; ++b, ++row) {
+      double under = org.dmin - ptv_dose[row];
+      if (under > 0.0)
+        f += w_under * under * under;
+    }
+  }
 
-    if (org.is_ptv) {
-      for (double d : dose) {
-        double under = org.Dmin - d;
-        if (under > 0.0)
-          f += instance_.w_under * under * under;
-      }
-    } else {
-      for (double d : dose) {
-        double over = d - org.Dmax;
-        if (over > 0.0)
-          f += instance_.w_over * over * over;
-      }
+  row = 0;
+  for (const FmoOrganRef &org : source_->oarOrgans()) {
+    for (int b = 0; b < org.n_boxets; ++b, ++row) {
+      double over = oar_dose[row] - org.dmax;
+      if (over > 0.0)
+        f += w_over * over * over;
     }
   }
 
@@ -53,7 +56,7 @@ double ImrtProblem::evaluateSolution(emili::Solution &solution) {
 
 void ImrtProblem::setActiveAngles(int k) {
   active_angle_idxs_.clear();
-  k = std::min(k, instance_.n_angles);
+  k = std::min(k, nAngles());
   for (int i = 0; i < k; ++i)
     active_angle_idxs_.push_back(i);
 }
@@ -70,9 +73,11 @@ bool ImrtProblem::isAngleActive(int angle_idx) const {
 void ImrtProblem::printFmoStats(const ImrtSolution &sol, double val,
                                 double delta) {
   const auto &x = sol.getIntensities();
-  auto organ_doses = instance_.computeOrganDoses(x);
-  int per = instance_.n_dimlets_per_angle;
-  int n_active = active_angle_idxs_.empty() ? instance_.n_angles
+  std::vector<double> ptv_dose, oar_dose;
+  source_->computeDoses(x, ptv_dose, oar_dose);
+
+  int n_angles = nAngles();
+  int n_active = active_angle_idxs_.empty() ? n_angles
                                              : (int)active_angle_idxs_.size();
 
   std::cout << "\n------------------------------------------------------------\n";
@@ -85,59 +90,69 @@ void ImrtProblem::printFmoStats(const ImrtSolution &sol, double val,
 
   // Per-angle stats
   std::cout << " Angulos gantry candidatos (" << n_active << "/"
-            << instance_.n_angles << " activos):\n";
-  for (int a = 0; a < instance_.n_angles; ++a) {
-    int start = a * per;
+            << n_angles << " activos):\n";
+  for (int a = 0; a < n_angles; ++a) {
     if (isAngleActive(a)) {
+      std::vector<int> ids = source_->activeDimletIds({a});
       double sum_x = 0.0;
       int nonzero = 0;
-      for (int d = 0; d < per; ++d) {
-        sum_x += x[start + d];
-        if (x[start + d] > 0.0)
+      for (int d : ids) {
+        sum_x += x[d];
+        if (x[d] > 0.0)
           ++nonzero;
       }
-      std::cout << "   [ACT] " << std::setw(4) << instance_.angles[a]
+      int per = (int)ids.size();
+      std::cout << "   [ACT] " << std::setw(4) << angle_degrees_[a]
                 << " deg | no-cero: " << std::setw(3) << nonzero << "/" << per
-                << " | media: " << std::setprecision(3) << (sum_x / per)
+                << " | media: " << std::setprecision(3)
+                << (per > 0 ? sum_x / per : 0.0)
                 << " | suma: " << std::setprecision(2) << sum_x << "\n";
     } else {
-      std::cout << "   [---] " << std::setw(4) << instance_.angles[a]
+      std::cout << "   [---] " << std::setw(4) << angle_degrees_[a]
                 << " deg | (inactivo)\n";
     }
   }
 
   // Per-organ stats
   std::cout << " Organos:\n";
-  for (int o = 0; o < (int)instance_.organs.size(); ++o) {
-    const OrganData &org = instance_.organs[o];
-    const auto &dose = organ_doses[o];
+  int row = 0;
+  for (const FmoOrganRef &org : source_->ptvOrgans()) {
     double mean_d = 0.0, penalty = 0.0;
-    for (double d : dose)
+    for (int b = 0; b < org.n_boxets; ++b) {
+      double d = ptv_dose[row + b];
       mean_d += d;
-    if (!dose.empty())
-      mean_d /= (double)dose.size();
-
-    if (org.is_ptv) {
-      for (double d : dose) {
-        double u = org.Dmin - d;
-        if (u > 0)
-          penalty += instance_.w_under * u * u;
-      }
-      std::cout << "   " << std::left << std::setw(10) << org.name
-                << " [tumor] | dosis media: " << std::setprecision(2)
-                << mean_d << " Gy | objetivo >= " << org.Dmin
-                << " | penaliz: " << std::setprecision(2) << penalty << "\n";
-    } else {
-      for (double d : dose) {
-        double ov = d - org.Dmax;
-        if (ov > 0)
-          penalty += instance_.w_over * ov * ov;
-      }
-      std::cout << "   " << std::left << std::setw(10) << org.name
-                << " [OAR]   | dosis media: " << std::setprecision(2)
-                << mean_d << " Gy | limite   <= " << org.Dmax
-                << " | penaliz: " << std::setprecision(2) << penalty << "\n";
+      double u = org.dmin - d;
+      if (u > 0)
+        penalty += source_->w_under() * u * u;
     }
+    if (org.n_boxets > 0)
+      mean_d /= (double)org.n_boxets;
+    row += org.n_boxets;
+
+    std::cout << "   " << std::left << std::setw(10) << org.name
+              << " [tumor] | dosis media: " << std::setprecision(2)
+              << mean_d << " Gy | objetivo >= " << org.dmin
+              << " | penaliz: " << std::setprecision(2) << penalty << "\n";
+  }
+
+  row = 0;
+  for (const FmoOrganRef &org : source_->oarOrgans()) {
+    double mean_d = 0.0, penalty = 0.0;
+    for (int b = 0; b < org.n_boxets; ++b) {
+      double d = oar_dose[row + b];
+      mean_d += d;
+      double ov = d - org.dmax;
+      if (ov > 0)
+        penalty += source_->w_over() * ov * ov;
+    }
+    if (org.n_boxets > 0)
+      mean_d /= (double)org.n_boxets;
+    row += org.n_boxets;
+
+    std::cout << "   " << std::left << std::setw(10) << org.name
+              << " [OAR]   | dosis media: " << std::setprecision(2)
+              << mean_d << " Gy | limite   <= " << org.dmax
+              << " | penaliz: " << std::setprecision(2) << penalty << "\n";
   }
   std::cout << "------------------------------------------------------------\n";
   std::cout << std::right; // restore default alignment
@@ -189,44 +204,36 @@ emili::Solution *ImrtInitialSolution::generateSolution() {
 }
 
 emili::Solution *ImrtInitialSolution::generateEmptySolution() {
-  return new ImrtSolution(problem_.getInstance().n_dimlets);
+  return new ImrtSolution(problem_.getSource().n_dimlets());
 }
 
 emili::Solution *ZeroInitialSolution::generate() {
-  return new ImrtSolution(problem_.getInstance().n_dimlets);
+  return new ImrtSolution(problem_.getSource().n_dimlets());
 }
 
 emili::Solution *UniformInitialSolution::generate() {
-  int n = problem_.getInstance().n_dimlets;
+  int n = problem_.getSource().n_dimlets();
   const auto &active = problem_.getActiveAngles();
-  int per = problem_.getInstance().n_dimlets_per_angle;
   std::vector<double> x(n, 0.0);
   if (active.empty()) {
     std::fill(x.begin(), x.end(), intensity_);
   } else {
-    for (int ai : active) {
-      int start = ai * per;
-      for (int d = 0; d < per; ++d)
-        x[start + d] = intensity_;
-    }
+    for (int d : problem_.getSource().activeDimletIds(active))
+      x[d] = intensity_;
   }
   return new ImrtSolution(0.0, x);
 }
 
 emili::Solution *RandomInitialSolution::generate() {
-  int n = problem_.getInstance().n_dimlets;
+  int n = problem_.getSource().n_dimlets();
   const auto &active = problem_.getActiveAngles();
-  int per = problem_.getInstance().n_dimlets_per_angle;
   std::vector<double> x(n, 0.0);
   if (active.empty()) {
     for (int d = 0; d < n; ++d)
       x[d] = emili::generateRealRandomNumber() * max_intensity_;
   } else {
-    for (int ai : active) {
-      int start = ai * per;
-      for (int d = 0; d < per; ++d)
-        x[start + d] = emili::generateRealRandomNumber() * max_intensity_;
-    }
+    for (int d : problem_.getSource().activeDimletIds(active))
+      x[d] = emili::generateRealRandomNumber() * max_intensity_;
   }
   return new ImrtSolution(0.0, x);
 }
@@ -236,20 +243,14 @@ emili::Solution *RandomInitialSolution::generate() {
  *---------------------------------------------------------------------------*/
 
 ImrtNeighborhood::ImrtNeighborhood(ImrtProblem &p)
-    : problem_(p), n_dimlets_(p.getInstance().n_dimlets),
-      max_intensity_(p.getInstance().max_intensity) {
+    : problem_(p), n_dimlets_(p.getSource().n_dimlets()),
+      max_intensity_(p.getSource().max_intensity()) {
   if (!p.getActiveAngles().empty())
     buildActiveDimlets(p.getActiveAngles());
 }
 
 void ImrtNeighborhood::buildActiveDimlets(const std::vector<int> &angle_idxs) {
-  active_dimlets_.clear();
-  int per = problem_.getInstance().n_dimlets_per_angle;
-  for (int ai : angle_idxs) {
-    int start = ai * per;
-    for (int d = 0; d < per; ++d)
-      active_dimlets_.push_back(start + d);
-  }
+  active_dimlets_ = problem_.getSource().activeDimletIds(angle_idxs);
 }
 
 /*---------------------------------------------------------------------------*
@@ -436,16 +437,18 @@ emili::Solution *RandomBeamletPerturbation::perturb(emili::Solution *solution) {
   ImrtSolution *s = static_cast<ImrtSolution *>(solution);
   std::vector<double> x = s->getIntensities();
   const auto &active = problem_.getActiveAngles();
-  int per = problem_.getInstance().n_dimlets_per_angle;
   int n = static_cast<int>(x.size());
+
+  std::vector<int> active_dimlets;
+  if (!active.empty())
+    active_dimlets = problem_.getSource().activeDimletIds(active);
 
   for (int i = 0; i < k_; ++i) {
     int d;
-    if (active.empty()) {
+    if (active_dimlets.empty()) {
       d = emili::generateRandomNumber() % n;
     } else {
-      int ai = active[emili::generateRandomNumber() % active.size()];
-      d = ai * per + emili::generateRandomNumber() % per;
+      d = active_dimlets[emili::generateRandomNumber() % active_dimlets.size()];
     }
     x[d] = emili::generateRealRandomNumber() * max_intensity_;
   }

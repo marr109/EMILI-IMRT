@@ -15,9 +15,9 @@ namespace imrt {
  *
  * Native C++ reader for the raw CERR export layout in instances/CERR_Prostate
  * (see ampl_gurobi/cerr_instance.py for the validated Python reference this
- * mirrors). Unlike ImrtInstance, angle beamlet counts are read directly from
- * beamletIndex.txt instead of assumed uniform, since this dataset does not
- * have a fixed beamlet count per angle.
+ * mirrors). Angle beamlet counts are read directly from beamletIndex.txt
+ * instead of assumed uniform, since this dataset does not have a fixed
+ * beamlet count per angle.
  *
  * Layout read:
  *   <ORGAN>.txt              global voxel ids; line order = local boxet index
@@ -25,10 +25,11 @@ namespace imrt {
  *   beamletIndex.txt         rows: angle_idx global_start global_end (1-based, inclusive)
  *
  * The per-angle dose files are ~11GB total across 360 angles x 4 organs, so
- * they are parsed lazily, one angle at a time, on first request -- BAO only
- * ever touches a handful of angles per solve, and revisits angles across
- * iterations, so caching the parsed rows in memory (unbounded, no eviction)
- * avoids redundant disk parsing without needing a size cap.
+ * they are parsed lazily, one angle at a time, on first request -- BAO and
+ * the classic imrt local search only touch a subset of angles per move, and
+ * revisit angles across iterations, so caching the parsed rows in memory
+ * (unbounded, no eviction) avoids redundant disk parsing without needing a
+ * size cap.
  *---------------------------------------------------------------------------*/
 class CerrFmoSource : public IFmoDataSource {
 public:
@@ -51,8 +52,8 @@ public:
     int nAnglesTotal() const { return n_angles_total_; }
 
     // True if `dir` looks like a CERR-format export (beamletIndex.txt present,
-    // instance_config.txt absent) -- used by ImrtBuilder to auto-detect format
-    // the same way ImrtInstance::loadFromDirectory auto-detects CORT vs old.
+    // instance_config.txt absent) -- used by ImrtBuilder to auto-detect the
+    // instance format before constructing this source.
     static bool looksLikeCerrDir(const std::string& dir);
 
 private:
