@@ -10,6 +10,12 @@
 namespace emili {
 namespace imrt {
 
+const ImrtInstance* BaoProblem::getCortInstance() const
+{
+    auto* cort = dynamic_cast<const ImrtInstanceFmoSource*>(source_.get());
+    return cort ? &cort->instance() : nullptr;
+}
+
 //=== Representación de solución ===============================================
 
 emili::Solution* BaoSolution::clone()
@@ -111,7 +117,7 @@ double BaoProblem::evaluateSolution(emili::Solution& s)
     // Convierte índices activos a grados reales del catálogo — llena angle_degrees_
     bs.angle_degrees_.resize(bs.active_angles_.size());
     for (int i = 0; i < (int)bs.active_angles_.size(); ++i)
-        bs.angle_degrees_[i] = inst_.angles[bs.active_angles_[i]];
+        bs.angle_degrees_[i] = angleDegree(bs.active_angles_[i]);
 
     // Logging en consola solo si verbose_ está activo — no afecta el resultado
     if (verbose_) {
@@ -146,14 +152,12 @@ double BaoProblem::evaluateSolution(emili::Solution& s)
 
 emili::Solution* FirstKAnglesInit::generateEmptySolution()
 {
-    const ImrtInstance& inst = bao_.getInstance();
-
-    // Ordena índices, no el catálogo: inst.angles mantiene su correspondencia
-    // con las matrices de dosis cargadas para cada ángulo.
-    std::vector<int> degree_order(inst.n_angles);
-    for (int i = 0; i < inst.n_angles; ++i) degree_order[i] = i;
+    // Ordena índices, no el catálogo: bao_.angleDegree() mantiene su
+    // correspondencia con las matrices de dosis cargadas para cada ángulo.
+    std::vector<int> degree_order(bao_.nAngles());
+    for (int i = 0; i < bao_.nAngles(); ++i) degree_order[i] = i;
     std::sort(degree_order.begin(), degree_order.end(),
-        [&inst](int a, int b) { return inst.angles[a] < inst.angles[b]; });
+        [this](int a, int b) { return bao_.angleDegree(a) < bao_.angleDegree(b); });
 
     // Selecciona los K ángulos de menor grado real. Por ejemplo, en el
     // catálogo de 36 ángulos produce 0°, 10°, 20°, 30° aunque el archivo
@@ -163,7 +167,7 @@ emili::Solution* FirstKAnglesInit::generateEmptySolution()
     std::sort(angles.begin(), angles.end());
 
     // Crea la solución en heap — sin evaluar: angle_degrees_ vacío, solution_value = 0
-    return new BaoSolution(angles, bao_.getInstance().n_dimlets);
+    return new BaoSolution(angles, bao_.nDimlets());
 }
 
 emili::Solution* FirstKAnglesInit::generateSolution()
@@ -178,7 +182,7 @@ emili::Solution* FirstKAnglesInit::generateSolution()
 
 emili::Solution* RandomKAnglesInit::generateEmptySolution()
 {
-    int n = bao_.getInstance().n_angles;  // total de ángulos candidatos en el catálogo
+    int n = bao_.nAngles();  // total de ángulos candidatos en el catálogo
     int K = bao_.K();                     // cuántos ángulos debe tener la solución
 
     // Crea una permutación completa [0, 1, 2, ..., n-1]
@@ -199,7 +203,7 @@ emili::Solution* RandomKAnglesInit::generateEmptySolution()
     std::sort(angles.begin(), angles.end());
 
     // Crea la solución en heap — sin evaluar: angle_degrees_ vacío, solution_value = 0
-    return new BaoSolution(angles, bao_.getInstance().n_dimlets);
+    return new BaoSolution(angles, bao_.nDimlets());
 }
 
 emili::Solution* RandomKAnglesInit::generateSolution()
@@ -217,7 +221,7 @@ emili::Solution* RandomKAnglesInit::generateSolution()
 int AngleSwapNeighborhood::size()
 {
     int K  = bao_.K();                      // ángulos activos
-    int na = bao_.getInstance().n_angles;   // total de ángulos en el catálogo
+    int na = bao_.nAngles();                // total de ángulos en el catálogo
 
     // Vecindario = K opciones para sacar × (na - K) opciones para meter
     // Ej: K=5, na=36 → 5 × 31 = 155 vecinos
@@ -317,14 +321,12 @@ emili::Solution* AngleSwapNeighborhood::random(emili::Solution* s)
 
 void AngleShiftNeighborhood::buildDegreeOrder()
 {
-    const ImrtInstance& inst = bao_.getInstance();
-
     // Construye la permutación de índices de catálogo ordenados por grado real ascendente
-    // (el array crudo inst.angles está en orden lexicográfico de string, no numérico)
+    // (el array crudo del catálogo puede estar en orden lexicográfico de string, no numérico)
     degree_order_.resize(n_angles_);
     for (int i = 0; i < n_angles_; ++i) degree_order_[i] = i;
     std::sort(degree_order_.begin(), degree_order_.end(),
-        [&inst](int a, int b) { return inst.angles[a] < inst.angles[b]; });
+        [this](int a, int b) { return bao_.angleDegree(a) < bao_.angleDegree(b); });
 
     // Lookup inverso: índice de catálogo -> su posición en degree_order_
     degree_rank_.resize(n_angles_);
@@ -490,7 +492,7 @@ emili::Solution* RandomAnglesPerturbation::perturb(emili::Solution* current)
 {
     // Trabaja sobre una copia — no muta la solución actual
     BaoSolution* bs = static_cast<BaoSolution*>(current->clone());
-    const int n = bao_.getInstance().n_angles;
+    const int n = bao_.nAngles();
 
     // Construye la lista de ángulos inactivos
     std::vector<bool> active_flag(n, false);
@@ -533,7 +535,7 @@ emili::Solution* GreedyAnglesPerturbation::perturb(emili::Solution* current)
 {
     // Trabaja sobre una copia — no muta la solución actual
     BaoSolution* bs = static_cast<BaoSolution*>(current->clone());
-    const int n = bao_.getInstance().n_angles;
+    const int n = bao_.nAngles();
     const int K = bao_.K();
 
     // Construye la lista de ángulos inactivos

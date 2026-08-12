@@ -1,116 +1,172 @@
 #include "imrt_fmo.h"
 
-#include <algorithm>
-#include <cstring>
+#include <ampl/ampl.h>
+
+#include <cstdlib>
 #include <iostream>
+
+#ifndef EMILI_REPO_ROOT
+#define EMILI_REPO_ROOT "."
+#endif
 
 namespace emili {
 namespace imrt {
 
+namespace {
+
+std::string envOr(const char* var, const std::string& fallback)
+{
+    const char* v = std::getenv(var);
+    return (v && *v) ? std::string(v) : fallback;
+}
+
+std::string repoPath(const std::string& rel)
+{
+    return std::string(EMILI_REPO_ROOT) + "/" + rel;
+}
+
+} // namespace
+
 /*---------------------------------------------------------------------------*
- * Constructor — precomputes dose index, organ split, and fixed bounds.
- * No OSQP workspace is built here; the QP is assembled fresh per solve().
+ * Constructor / destructor
  *---------------------------------------------------------------------------*/
-ImrtFmoSolver::ImrtFmoSolver(const ImrtInstance& inst)
-    : inst_(inst), ready_(false), n_ptv_(0), n_oar_(0)
+ImrtFmoSolver::ImrtFmoSolver(const IFmoDataSource& source)
+    : source_(source), ready_(false), n_ptv_(0), n_oar_(0)
 {
     precompute();
+    try {
+        initAmpl();
+        ready_ = true;
+    } catch (const std::exception& e) {
+        std::cerr << "[FMO] ERROR: AMPL/Gurobi initialization failed: " << e.what() << "\n";
+        ready_ = false;
+    }
 }
 
+// Out-of-line so ~unique_ptr<ampl::AMPL> only needs the complete type here,
+// not wherever ImrtFmoSolver is used as a member (imrt_bao.h stays free of
+// the AMPL headers).
+ImrtFmoSolver::~ImrtFmoSolver() = default;
+
+/*---------------------------------------------------------------------------*
+ * precompute — organ boundaries (constant across solves for a given source)
+ *---------------------------------------------------------------------------*/
 void ImrtFmoSolver::precompute()
 {
-    const ImrtInstance& inst = inst_;
-    const int nb = inst.n_dimlets;
+    n_ptv_ = 0;
+    n_oar_ = 0;
+    dmin_.clear();
+    dmax_.clear();
+    dmax_ptv_.clear();
 
-    // ── Organ split ────────────────────────────────────────────────────────
-    for (int o = 0; o < (int)inst.organs.size(); ++o) {
-        if (inst.organs[o].is_ptv) ptv_orgs_.push_back(o);
-        else                       oar_orgs_.push_back(o);
-    }
-
-    ptv_row_off_.resize(ptv_orgs_.size());
-    oar_row_off_.resize(oar_orgs_.size());
-    for (int i = 0; i < (int)ptv_orgs_.size(); ++i) {
-        ptv_row_off_[i] = n_ptv_;
-        n_ptv_ += inst.organs[ptv_orgs_[i]].n_boxets;
-    }
-    
-    for (int i = 0; i < (int)oar_orgs_.size(); ++i) {
-        oar_row_off_[i] = n_oar_;
-        n_oar_ += inst.organs[oar_orgs_[i]].n_boxets;
-    }
-
-    // ── Per-beamlet dose index ─────────────────────────────────────────────
-    // ptv_dose_[j] = list of (boxet_row_within_G4, dose_rate)
-    // oar_dose_[j] = list of (boxet_row_within_G5, dose_rate)
-    ptv_dose_.resize(nb);
-    oar_dose_.resize(nb);
-
-    for (int i = 0; i < (int)ptv_orgs_.size(); ++i) {
-        int rbase = ptv_row_off_[i];
-        for (const DoseEntry& e : inst.organs[ptv_orgs_[i]].entries)
-            ptv_dose_[e.dimlet_id].push_back({rbase + e.boxet_id, e.dose_rate});
-    }
-    for (int i = 0; i < (int)oar_orgs_.size(); ++i) {
-        int rbase = oar_row_off_[i];
-        for (const DoseEntry& e : inst.organs[oar_orgs_[i]].entries)
-            oar_dose_[e.dimlet_id].push_back({rbase + e.boxet_id, e.dose_rate});
-    }
-
-    // ── Fixed bounds for PTV (G4) and OAR (G5) blocks ─────────────────────
-    // Stored as (n_ptv + n_oar) entries: l_fixed_[G4 rows | G5 rows]
-    const double INF = 1e30;
-    l_fixed_.assign(n_ptv_ + n_oar_, 0.0);
-    u_fixed_.assign(n_ptv_ + n_oar_, INF);
-
-    for (int i = 0; i < (int)ptv_orgs_.size(); ++i) {
-        double Dmin = inst.organs[ptv_orgs_[i]].Dmin;
-        for (int b = 0; b < inst.organs[ptv_orgs_[i]].n_boxets; ++b) {
-            int r = ptv_row_off_[i] + b;
-            l_fixed_[r] = Dmin;
-            u_fixed_[r] = INF;
+    for (const FmoOrganRef& o : source_.ptvOrgans()) {
+        n_ptv_ += o.n_boxets;
+        for (int b = 0; b < o.n_boxets; ++b) {
+            dmin_.push_back(o.dmin);
+            dmax_ptv_.push_back(o.dmax_ptv);
         }
     }
-    for (int i = 0; i < (int)oar_orgs_.size(); ++i) {
-        double Dmax = inst.organs[oar_orgs_[i]].Dmax;
-        for (int b = 0; b < inst.organs[oar_orgs_[i]].n_boxets; ++b) {
-            int r = n_ptv_ + oar_row_off_[i] + b;
-            l_fixed_[r] = -INF;
-            u_fixed_[r] = Dmax;
-        }
+    for (const FmoOrganRef& o : source_.oarOrgans()) {
+        n_oar_ += o.n_boxets;
+        for (int b = 0; b < o.n_boxets; ++b)
+            dmax_.push_back(o.dmax);
     }
-
-    // ── Dmax_ptv per PTV voxel = 1.07 × Dmin (for overdose penalty) ──────────
-    u_ptv_max_.assign(n_ptv_, 1e30);
-    if (inst_.w_ptv_over > 0.0) {
-        for (int i = 0; i < (int)ptv_orgs_.size(); ++i) {
-            double dmax_ptv = 1.07 * inst_.organs[ptv_orgs_[i]].Dmin;
-            for (int b = 0; b < inst_.organs[ptv_orgs_[i]].n_boxets; ++b)
-                u_ptv_max_[ptv_row_off_[i] + b] = dmax_ptv;
-        }
-    }
-
-    ready_ = true;
 }
 
 /*---------------------------------------------------------------------------*
- * solve — REMOVED on this branch.
- *
- * The exact QP solve (build a compact QP for the K active angles, call
- * OSQP) has been removed. This stub fails loudly instead of silently
- * returning a wrong answer: it logs an error and returns a worst-case
- * sentinel objective (x = 0, f = 1e30) so any caller comparing objective
- * values treats this as the worst possible outcome.
- *
- * See ampl_gurobi/ for the AMPL+Gurobi replacement, and the `develop`
- * branch for the preserved OSQP implementation.
+ * initAmpl — one-time environment/model setup + the static (per-source,
+ * not per-solve) parameters.
+ *---------------------------------------------------------------------------*/
+void ImrtFmoSolver::initAmpl()
+{
+    std::string bin_dir = envOr("EMILI_AMPL_BIN_DIR",
+        repoPath("ampl_gurobi/.venv/lib/python3.9/site-packages/ampl_module_base/bin"));
+    std::string gurobi_bin = envOr("EMILI_GUROBI_BIN",
+        repoPath("ampl_gurobi/.venv/lib/python3.9/site-packages/ampl_module_gurobi/bin/gurobi"));
+
+    ampl::Environment env(bin_dir);
+    ampl_.reset(new ampl::AMPL(env));
+    ampl_->setOption("solver", gurobi_bin);
+    ampl_->read(repoPath("ampl_gurobi/fmo.mod"));
+
+    ampl_->getParameter("n_ptv").set(n_ptv_);
+    ampl_->getParameter("n_oar").set(n_oar_);
+    ampl_->getParameter("max_intensity").set(source_.max_intensity());
+    ampl_->getParameter("w_under").set(source_.w_under());
+    ampl_->getParameter("w_over").set(source_.w_over());
+    ampl_->getParameter("w_ptv_over").set(source_.w_ptv_over());
+
+    // dmin/dmax/dmax_ptv are indexed by PTV_B/OAR_B := 0..n-1, the same
+    // ascending row order dmin_/dmax_/dmax_ptv_ were built in, so a plain
+    // positional setValues matches AMPL's iteration order for these ranges.
+    if (n_ptv_ > 0) {
+        ampl_->getParameter("dmin").setValues(ampl::Args(dmin_.data()), dmin_.size());
+        ampl_->getParameter("dmax_ptv").setValues(ampl::Args(dmax_ptv_.data()), dmax_ptv_.size());
+    }
+    if (n_oar_ > 0) {
+        ampl_->getParameter("dmax").setValues(ampl::Args(dmax_.data()), dmax_.size());
+    }
+}
+
+/*---------------------------------------------------------------------------*
+ * solve — refresh the per-solve data (active dimlets, sparse dose sets) and
+ * resolve with Gurobi.
  *---------------------------------------------------------------------------*/
 std::pair<std::vector<double>, double>
-ImrtFmoSolver::solve(const std::vector<int>& /*active_angles*/)
+ImrtFmoSolver::solve(const std::vector<int>& active_angles)
 {
-    std::cerr << "[FMO] ERROR: FMO solver removed from this branch — "
-                 "see ampl_gurobi/ for the AMPL+Gurobi replacement.\n";
-    return {std::vector<double>(inst_.n_dimlets, 0.0), 1e30};
+    if (!ready_)
+        return {std::vector<double>(source_.n_dimlets(), 0.0), 1e30};
+
+    std::vector<int> active = source_.activeDimletIds(active_angles);
+
+    std::vector<double> active_d(active.begin(), active.end());
+
+    std::vector<ampl::Tuple> ptv_tuples, oar_tuples;
+    std::vector<double> ptv_vals, oar_vals;
+    for (int j : active) {
+        for (const auto& e : source_.ptvDoseFor(j)) {
+            ptv_tuples.emplace_back(ampl::Variant((double)e.first), ampl::Variant((double)j));
+            ptv_vals.push_back(e.second);
+        }
+        for (const auto& e : source_.oarDoseFor(j)) {
+            oar_tuples.emplace_back(ampl::Variant((double)e.first), ampl::Variant((double)j));
+            oar_vals.push_back(e.second);
+        }
+    }
+
+    try {
+        // Reset before reassigning: narrowing DIMLETS/PTV_DOSE/OAR_DOSE via `let`
+        // while d_ptv/d_oar still hold values for now-removed indices makes AMPL
+        // raise "invalid subscripts discarded" as a hard error (not a warning) on
+        // that assignment -- which broke every solve() after the first. `reset
+        // data` wipes the set and its dependent params atomically with no
+        // narrowing step in between, so there's nothing left to discard.
+        ampl_->eval("reset data DIMLETS, PTV_DOSE, OAR_DOSE, d_ptv, d_oar;");
+
+        ampl_->getSet("DIMLETS").setValues(ampl::Args(active_d.data()), active_d.size());
+        ampl_->getSet("PTV_DOSE").setValues(ptv_tuples.data(), ptv_tuples.size());
+        ampl_->getSet("OAR_DOSE").setValues(oar_tuples.data(), oar_tuples.size());
+
+        if (!ptv_tuples.empty())
+            ampl_->getParameter("d_ptv").setValues(ptv_tuples.data(), ampl::Args(ptv_vals.data()), ptv_tuples.size());
+        if (!oar_tuples.empty())
+            ampl_->getParameter("d_oar").setValues(oar_tuples.data(), ampl::Args(oar_vals.data()), oar_tuples.size());
+
+        ampl_->solve();
+
+        double f = ampl_->getObjective("fmo_objective").value();
+
+        std::vector<double> x_full(source_.n_dimlets(), 0.0);
+        ampl::Variable xvar = ampl_->getVariable("x");
+        for (int j : active)
+            x_full[j] = xvar.get(ampl::Variant((double)j)).value();
+
+        return {x_full, f};
+    } catch (const std::exception& e) {
+        std::cerr << "[FMO] ERROR: AMPL/Gurobi solve failed: " << e.what() << "\n";
+        return {std::vector<double>(source_.n_dimlets(), 0.0), 1e30};
+    }
 }
 
 } // namespace imrt

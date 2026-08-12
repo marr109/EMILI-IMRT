@@ -1,7 +1,10 @@
 #include "imrt_builder.h"
+#include "cerr_instance.h"
+#include "imrt_fmo_source.h"
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <memory>
 
 // ── Token keywords ────────────────────────────────────────────────────────────
 #define PROBLEM_IMRT    "imrt"
@@ -101,6 +104,64 @@ emili::Problem* ImrtBuilder::openInstance()
     if (is_bao)
         K = tm.getInteger();   // consume K (number of gantry angles to select)
 
+    // CERR-format directories (instances/CERR_Prostate) don't have an
+    // instance_config.txt / fixed beamlets-per-angle layout ImrtInstance
+    // requires — auto-detect and route to CerrFmoSource before attempting
+    // ImrtInstance::loadFromDirectory, the same way CORT-vs-old format is
+    // auto-detected inside that loader.
+    if (emili::imrt::CerrFmoSource::looksLikeCerrDir(dir)) {
+        if (!is_bao) {
+            std::cerr << "[IMRT] CERR-format instance at " << dir
+                      << " only supports the 'baoimrt' problem type.\n";
+            exit(-1);
+        }
+
+        auto source = std::unique_ptr<emili::imrt::IFmoDataSource>(
+            new emili::imrt::CerrFmoSource(dir));
+        auto* cerr_src = static_cast<emili::imrt::CerrFmoSource*>(source.get());
+        int n_angles = cerr_src->nAnglesTotal();
+
+        prs::printTabPlusOne("directory", dir);
+        prs::printTab("CERR-format instance detected (auto)");
+        prs::printTabPlusOne("angles",  n_angles);
+        prs::printTabPlusOne("dimlets", source->n_dimlets());
+
+        if (K <= 0 || K > n_angles) {
+            std::cerr << "[BAO] K=" << K << " invalido para "
+                      << n_angles << " angulos\n";
+            exit(-1);
+        }
+        prs::printTab("BAO problem (angle search)");
+        prs::printTabPlusOne("K (angulos activos)", K);
+
+        // For CERR, angle_idx IS the degree value: beamletIndex.txt covers
+        // a contiguous 0..359 range at 1 degree spacing (verified against
+        // instances/CERR_Prostate), unlike the CORT catalog which needs an
+        // explicit angles[] mapping.
+        std::vector<int> angle_degrees(n_angles);
+        for (int i = 0; i < n_angles; ++i) angle_degrees[i] = i;
+
+        emili::imrt::BaoProblem* prob =
+            new emili::imrt::BaoProblem(std::move(source), angle_degrees, K);
+        if (!prob->isReady()) {
+            std::cerr << "[BAO] FMO solver initialization failed\n";
+            exit(-1);
+        }
+
+        if (tm.checkToken(OPT_VERBOSE)) {
+            prob->setVerbose(true);
+            prs::printTab("modo verbose BAO activado");
+        }
+        if (tm.checkToken(OPT_CSV)) {
+            char* path = tm.nextToken();
+            if (path) {
+                prob->openCsvLog(std::string(path));
+                prs::printTabPlusOne("CSV log", path);
+            }
+        }
+        return prob;
+    }
+
     emili::imrt::ImrtInstance inst;
     if (!inst.loadFromDirectory(dir)) {
         std::cerr << "[IMRT] Could not load instance from: " << dir << "\n";
@@ -119,10 +180,13 @@ emili::Problem* ImrtBuilder::openInstance()
                       << inst.n_angles << " angulos\n";
             exit(-1);
         }
-        prs::printTab("BAO problem (angle search — FMO solver stubbed on this branch, see ampl_gurobi/)");
+        prs::printTab("BAO problem (angle search)");
         prs::printTabPlusOne("K (angulos activos)", K);
 
-        emili::imrt::BaoProblem* prob = new emili::imrt::BaoProblem(inst, K);
+        auto source = std::unique_ptr<emili::imrt::IFmoDataSource>(
+            new emili::imrt::ImrtInstanceFmoSource(inst));
+        emili::imrt::BaoProblem* prob =
+            new emili::imrt::BaoProblem(std::move(source), inst.angles, K);
         if (!prob->isReady()) {
             std::cerr << "[BAO] FMO solver initialization failed\n";
             exit(-1);

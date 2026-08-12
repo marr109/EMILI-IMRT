@@ -4,8 +4,10 @@
 #include "../emilibase.h"
 #include "imrt_instance.h"
 #include "imrt_fmo.h"
+#include "imrt_fmo_source.h"
 #include <fstream>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -61,8 +63,9 @@ class BaoProblem : public emili::Problem {
         double objective;
     };
 
-    ImrtInstance   inst_;   // owned copy (ImrtFmoSolver holds a ref to this)
-    ImrtFmoSolver  fmo_;
+    std::unique_ptr<IFmoDataSource> source_;  // owned; ImrtFmoSolver holds a ref to this
+    ImrtFmoSolver     fmo_;
+    std::vector<int>  angle_degrees_;  // catalog: angle_degrees_[i] = real degree of candidate angle i
     int            K_;
     bool           verbose_;
     std::ofstream  csv_file_;
@@ -71,16 +74,25 @@ class BaoProblem : public emili::Problem {
     bool           last_eval_cached_;
 
 public:
-    BaoProblem(ImrtInstance& inst, int K)
-        : inst_(inst), fmo_(inst_), K_(K), verbose_(false), eval_count_(0)
+    BaoProblem(std::unique_ptr<IFmoDataSource> source, std::vector<int> angle_degrees, int K)
+        : source_(std::move(source)), fmo_(*source_), angle_degrees_(std::move(angle_degrees))
+        , K_(K), verbose_(false), eval_count_(0)
         , last_eval_cached_(false) {}
 
     virtual double calcObjectiveFunctionValue(emili::Solution& s) override;
     virtual double evaluateSolution(emili::Solution& s) override;
-    virtual int    problemSize() override { return inst_.n_angles; }
+    virtual int    problemSize() override { return nAngles(); }
 
-    int  K()                          const { return K_; }
-    const ImrtInstance& getInstance() const { return inst_; }
+    int  K()                    const { return K_; }
+    int  nAngles()               const { return (int)angle_degrees_.size(); }
+    int  angleDegree(int idx)    const { return angle_degrees_[idx]; }
+    int  nDimlets()               const { return source_->n_dimlets(); }
+
+    // Non-null only when this BaoProblem is backed by a CORT/old-format
+    // ImrtInstance -- lets main.cpp still produce the clinical DVH report
+    // (reportPlan) for that path without coupling BaoProblem itself to
+    // ImrtInstance for CERR-backed instances, which have none.
+    const ImrtInstance* getCortInstance() const;
 
     void setVerbose(bool v) { verbose_ = v; }
     bool isReady()          const { return fmo_.isReady(); }
@@ -137,7 +149,7 @@ class AngleSwapNeighborhood : public emili::Neighborhood {
 
 public:
     explicit AngleSwapNeighborhood(BaoProblem& p)
-        : bao_(p), n_angles_(p.getInstance().n_angles)
+        : bao_(p), n_angles_(p.nAngles())
         , cur_active_idx_(0), cur_inactive_idx_(0), first_(true)
     {}
 
@@ -181,7 +193,7 @@ class AngleShiftNeighborhood : public emili::Neighborhood {
 
 public:
     explicit AngleShiftNeighborhood(BaoProblem& p, int step = 1)
-        : bao_(p), n_angles_(p.getInstance().n_angles), step_(step)
+        : bao_(p), n_angles_(p.nAngles()), step_(step)
         , cur_active_idx_(0), cur_dir_(0), first_(true)
     {}
 

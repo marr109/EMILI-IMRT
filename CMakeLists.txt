@@ -103,3 +103,16 @@ if(WRITE_COMMIT_ID)
     add_dependencies(${PROJECT_NAME} GNUM)
     add_dependencies(CGNUM GNUM)
 endif(WRITE_COMMIT_ID)
+
+# AMPL + Gurobi FMO solver (imrt/imrt_fmo.cpp) — vendored C++ API, see
+# third_party/ampl_cppapi/. EMILI_REPO_ROOT is baked in at configure time so
+# the binary resolves ampl_gurobi/fmo.mod and the AMPL/Gurobi runtime paths
+# from an absolute repo root regardless of the working directory it is run
+# from or where the build tree lives.
+set(EMILI_AMPL_CPPAPI_DIR ${CMAKE_SOURCE_DIR}/third_party/ampl_cppapi)
+target_include_directories(${PROJECT_NAME} PRIVATE ${EMILI_AMPL_CPPAPI_DIR}/include)
+target_link_libraries(${PROJECT_NAME} PRIVATE ${EMILI_AMPL_CPPAPI_DIR}/lib/libampl.dylib)
+target_compile_definitions(${PROJECT_NAME} PRIVATE EMILI_REPO_ROOT="${CMAKE_SOURCE_DIR}")
+set_target_properties(${PROJECT_NAME} PROPERTIES
+    BUILD_RPATH "${EMILI_AMPL_CPPAPI_DIR}/lib"
+    INSTALL_RPATH "${EMILI_AMPL_CPPAPI_DIR}/lib")

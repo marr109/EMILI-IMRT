@@ -1,9 +1,12 @@
 #ifndef IMRT_FMO_H
 #define IMRT_FMO_H
 
-#include "imrt_instance.h"
+#include "imrt_fmo_source.h"
 #include <vector>
 #include <utility>
+#include <memory>
+
+namespace ampl { class AMPL; }
 
 namespace emili {
 namespace imrt {
@@ -11,18 +14,9 @@ namespace imrt {
 /**
  * ImrtFmoSolver
  *
- * FMO solver — REMOVED from this branch.
- *
- * The exact OSQP-based implementation has been removed here in favor of an
- * AMPL+Gurobi track built separately under ampl_gurobi/ (see that directory
- * for the working replacement). solve() below is a stub that fails loudly
- * (logs an error and returns a worst-case sentinel objective) so that BAO
- * still compiles/links but cannot silently produce wrong results.
- *
- * The full OSQP implementation remains available on the `develop` branch.
- *
- * Below is the QP formulation this solver used to solve exactly
- * (z = [x_active; u_ptv; v_oar]):
+ * Solves the FMO QP for a set of active angles via AMPL + Gurobi, reading
+ * the shared model at ampl_gurobi/fmo.mod (kept as the single source of
+ * truth for the objective/constraints instead of duplicating it here):
  *
  *   min   w_under * ||u||^2  +  w_over * ||v||^2  [+  w_ptv_over * ||w||^2]
  *   s.t.  D_ptv * x + u  >=  Dmin          (PTV underdose slack)
@@ -32,48 +26,44 @@ namespace imrt {
  *         0  <=  x_j  <=  M
  *
  * The QP is built at each solve() call using only the K active angles'
- * beamlets (K × per_angle variables instead of n_candidates × per_angle).
- * This keeps the problem size O(K) regardless of how many candidate angles
- * are in the instance, enabling large candidate pools with no extra cost.
+ * beamlets (K x per_angle variables instead of n_candidates x per_angle).
  *
- * Constructor pre-computes the per-beamlet dose index so that solve() can
- * assemble the compact CSC matrices quickly.
+ * Depends on IFmoDataSource rather than a concrete instance format, so the
+ * same solver serves both ImrtInstanceFmoSource (CORT/old format, fixed
+ * beamlets per angle) and CerrFmoSource (CERR export, variable beamlets
+ * per angle).
+ *
+ * Keeps a persistent ampl::AMPL member (environment + model read once in
+ * the constructor) since BAO calls solve() potentially thousands of times;
+ * only the per-solve data (active dimlets, sparse dose sets) is refreshed.
  */
 class ImrtFmoSolver {
 public:
-    explicit ImrtFmoSolver(const ImrtInstance& inst);
-    ~ImrtFmoSolver() = default;
+    explicit ImrtFmoSolver(const IFmoDataSource& source);
+    ~ImrtFmoSolver();
 
-    // Solve FMO for the given active angle indices (0-based into inst.angles).
-    // Returns { x (length inst.n_dimlets, zero for inactive), objective f* }.
+    // Solve FMO for the given active angle indices (0-based, into the BAO
+    // angle catalog -- same indexing convention the data source expects).
+    // Returns { x (length source.n_dimlets(), zero for inactive), objective f* }.
     std::pair<std::vector<double>, double>
     solve(const std::vector<int>& active_angles);
 
-    int nBeamlets() const { return inst_.n_dimlets; }
+    int nBeamlets() const { return source_.n_dimlets(); }
     bool isReady()  const { return ready_; }
 
 private:
-    const ImrtInstance& inst_;
+    const IFmoDataSource& source_;
     bool ready_;
 
-    // Organ split (computed once in constructor)
-    std::vector<int> ptv_orgs_;
-    std::vector<int> oar_orgs_;
-    int n_ptv_;  // total PTV boxets
-    int n_oar_;  // total OAR boxets
-    std::vector<int> ptv_row_off_;  // per-PTV-organ offset in G4 block
-    std::vector<int> oar_row_off_;  // per-OAR-organ offset in G5 block
+    int n_ptv_, n_oar_;
+    std::vector<double> dmin_;      // per PTV boxet row, length n_ptv_
+    std::vector<double> dmax_;      // per OAR boxet row, length n_oar_
+    std::vector<double> dmax_ptv_;  // per PTV boxet row, length n_ptv_
 
-    // Per-beamlet dose index: ptv_dose_[j] = list of (G4_row, dose_rate)
-    std::vector<std::vector<std::pair<int,double>>> ptv_dose_;
-    std::vector<std::vector<std::pair<int,double>>> oar_dose_;
-
-    // PTV/OAR bounds (constant across solves)
-    std::vector<double> l_fixed_;     // lower bounds (n_ptv+n_oar rows)
-    std::vector<double> u_fixed_;     // upper bounds (n_ptv+n_oar rows)
-    std::vector<double> u_ptv_max_;   // Dmax_ptv per PTV voxel (= 1.07*Dmin)
+    std::unique_ptr<ampl::AMPL> ampl_;
 
     void precompute();
+    void initAmpl();
 };
 
 } // namespace imrt

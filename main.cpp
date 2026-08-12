@@ -70,12 +70,16 @@ int main(int argc, char *argv[])
             emili::Problem* prob = &ls->getInitialSolution().getProblem();
             if (auto* bp = dynamic_cast<emili::imrt::BaoProblem*>(prob)) {
                 auto* bs = dynamic_cast<emili::imrt::BaoSolution*>(solution);
-                if (bs) {
+                const emili::imrt::ImrtInstance* cort_inst = bp->getCortInstance();
+                if (bs && cort_inst) {
                     std::vector<int> deg(bs->active_angles_.size());
                     for (size_t i = 0; i < deg.size(); ++i)
-                        deg[i] = bp->getInstance().angles[bs->active_angles_[i]];
-                    emili::imrt::reportPlan(bp->getInstance(), bs->intensities_,
+                        deg[i] = bp->angleDegree(bs->active_angles_[i]);
+                    emili::imrt::reportPlan(*cort_inst, bs->intensities_,
                                             solval, deg, std::cout, "dvh.csv");
+                } else if (bs) {
+                    std::cout << "[report] Clinical DVH report unavailable for this "
+                                 "data source (non-CORT instance) — objective/angles only.\n";
                 }
             } else
             if (auto* ip = dynamic_cast<emili::imrt::ImrtProblem*>(prob)) {
