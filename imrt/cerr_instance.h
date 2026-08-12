@@ -13,9 +13,8 @@ namespace imrt {
 /*---------------------------------------------------------------------------*
  * CerrFmoSource
  *
- * Native C++ reader for the raw CERR export layout in instances/CERR_Prostate
- * (see ampl_gurobi/cerr_instance.py for the validated Python reference this
- * mirrors). Angle beamlet counts are read directly from beamletIndex.txt
+ * Native C++ reader for the raw CERR export layout in instances/CERR_Prostate.
+ * Angle beamlet counts are read directly from beamletIndex.txt
  * instead of assumed uniform, since this dataset does not have a fixed
  * beamlet count per angle.
  *

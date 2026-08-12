@@ -38,8 +38,7 @@ CerrFmoSource::CerrFmoSource(const std::string& dir)
 
     // Clinical Dmin/Dmax placeholders -- authorized for pipeline validation
     // only (no instance_config.txt / CERR patient plan documents the real
-    // prescription for this dataset). Mirrors ampl_gurobi/fmo_solve.py's
-    // CLINICAL_CONFIG exactly.
+    // prescription for this dataset).
     const double dmin_ptvhd = 65.0, dmin_ptvld = 65.0;
     const double dmax_bladder = 50.0, dmax_rectum = 50.0;
     max_intensity_ = 15000.0;

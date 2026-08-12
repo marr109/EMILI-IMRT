@@ -115,6 +115,12 @@ def main(argv=None):
     p.add_argument("--csv", required=True, help="Trajectory CSV (eval,angles_deg,objective).")
     p.add_argument("--output", default="plots/trajectory.png", help="Output PNG path.")
     p.add_argument(
+        "--skip-trajectory",
+        action="store_true",
+        help="Skip the two-panel trajectory.png (objective+heatmap by evaluation); "
+             "only improvements-csv/convergence-output are produced.",
+    )
+    p.add_argument(
         "--improvements-csv",
         help="Optional CSV containing only the initial solution and strict improvements.",
     )
@@ -136,6 +142,17 @@ def main(argv=None):
         write_improvements(args.improvements_csv, improvements)
     if args.convergence_output:
         plot_convergence(args.convergence_output, improvements)
+
+    if args.skip_trajectory:
+        if args.improvements_csv:
+            print("improvements CSV written: {0}".format(args.improvements_csv))
+        if args.convergence_output:
+            print("convergence plot written: {0}".format(args.convergence_output))
+        print("  evaluations : {0}".format(len(evals)))
+        print("  improvements: {0}".format(len(improvements) - 1))
+        print("  best objective: {0:.2f} (eval {1})".format(
+            min(objectives), evals[objectives.index(min(objectives))]))
+        return 0
 
     out_dir = os.path.dirname(args.output) or "."
     os.makedirs(out_dir, exist_ok=True)
