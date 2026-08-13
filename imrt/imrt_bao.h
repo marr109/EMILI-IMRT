@@ -87,7 +87,7 @@ public:
     int  angleDegree(int idx)    const { return angle_degrees_[idx]; }
     int  nDimlets()               const { return source_->n_dimlets(); }
 
-    void setVerbose(bool v) { verbose_ = v; }
+    void setVerbose(bool v) { verbose_ = v; fmo_.setVerbose(v); }
     bool isReady()          const { return fmo_.isReady(); }
     void openCsvLog(const std::string& path);
 };

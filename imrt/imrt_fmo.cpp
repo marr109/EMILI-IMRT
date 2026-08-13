@@ -58,8 +58,11 @@ void ImrtFmoSolver::precompute()
     dmin_.clear();
     dmax_.clear();
     dmax_ptv_.clear();
+    ptv_bounds_.clear();
+    oar_bounds_.clear();
 
     for (const FmoOrganRef& o : source_.ptvOrgans()) {
+        ptv_bounds_.push_back({o.name, n_ptv_, o.n_boxets});
         n_ptv_ += o.n_boxets;
         for (int b = 0; b < o.n_boxets; ++b) {
             dmin_.push_back(o.dmin);
@@ -67,10 +70,39 @@ void ImrtFmoSolver::precompute()
         }
     }
     for (const FmoOrganRef& o : source_.oarOrgans()) {
+        oar_bounds_.push_back({o.name, n_oar_, o.n_boxets});
         n_oar_ += o.n_boxets;
         for (int b = 0; b < o.n_boxets; ++b)
             dmax_.push_back(o.dmax);
     }
+}
+
+/*---------------------------------------------------------------------------*
+ * printSolveDims — advisor-requested sanity check (see git history / project
+ * notes): print each organ's boxet count (fixed) and how many sparse dose
+ * entries feed this specific solve (varies with the active-angle set), so a
+ * silently-stale or repeated matrix is visible immediately instead of
+ * hiding inside an otherwise-plausible objective value.
+ *---------------------------------------------------------------------------*/
+void ImrtFmoSolver::printSolveDims(int n_active_beamlets,
+                                    const std::vector<int>& ptv_nnz,
+                                    const std::vector<int>& oar_nnz) const
+{
+    std::cout << "  [FMO] beamlets_activos=" << n_active_beamlets << "\n";
+    for (size_t i = 0; i < ptv_bounds_.size(); ++i)
+        std::cout << "    PTV " << ptv_bounds_[i].name
+                   << ": boxets=" << ptv_bounds_[i].n_boxets
+                   << " entradas_dosis=" << ptv_nnz[i] << "\n";
+    for (size_t i = 0; i < oar_bounds_.size(); ++i)
+        std::cout << "    OAR " << oar_bounds_[i].name
+                   << ": boxets=" << oar_bounds_[i].n_boxets
+                   << " entradas_dosis=" << oar_nnz[i] << "\n";
+    // Gurobi runs as a child process writing straight to the inherited
+    // stdout fd; without an explicit flush here, this block-buffered
+    // std::cout output can appear AFTER that child's output in the
+    // terminal even though it was written first -- exactly backwards from
+    // what the "print before solving" sanity check is meant to show.
+    std::cout.flush();
 }
 
 /*---------------------------------------------------------------------------*
@@ -124,16 +156,32 @@ ImrtFmoSolver::solve(const std::vector<int>& active_angles)
 
     std::vector<ampl::Tuple> ptv_tuples, oar_tuples;
     std::vector<double> ptv_vals, oar_vals;
+    std::vector<int> ptv_nnz(ptv_bounds_.size(), 0), oar_nnz(oar_bounds_.size(), 0);
+
+    auto organOf = [](const std::vector<OrganBounds>& bounds, int row) -> int {
+        for (size_t i = 0; i < bounds.size(); ++i)
+            if (row >= bounds[i].row_off && row < bounds[i].row_off + bounds[i].n_boxets)
+                return (int)i;
+        return -1;
+    };
+
     for (int j : active) {
         for (const auto& e : source_.ptvDoseFor(j)) {
             ptv_tuples.emplace_back(ampl::Variant((double)e.first), ampl::Variant((double)j));
             ptv_vals.push_back(e.second);
+            int oi = organOf(ptv_bounds_, e.first);
+            if (oi >= 0) ++ptv_nnz[oi];
         }
         for (const auto& e : source_.oarDoseFor(j)) {
             oar_tuples.emplace_back(ampl::Variant((double)e.first), ampl::Variant((double)j));
             oar_vals.push_back(e.second);
+            int oi = organOf(oar_bounds_, e.first);
+            if (oi >= 0) ++oar_nnz[oi];
         }
     }
+
+    if (verbose_)
+        printSolveDims((int)active.size(), ptv_nnz, oar_nnz);
 
     try {
         // Reset before reassigning: narrowing DIMLETS/PTV_DOSE/OAR_DOSE via `let`

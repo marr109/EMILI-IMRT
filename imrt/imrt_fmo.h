@@ -5,6 +5,7 @@
 #include <vector>
 #include <utility>
 #include <memory>
+#include <string>
 
 namespace ampl { class AMPL; }
 
@@ -50,19 +51,35 @@ public:
     int nBeamlets() const { return source_.n_dimlets(); }
     bool isReady()  const { return ready_; }
 
+    // When on, solve() prints per-organ boxet/dose-entry counts before each
+    // real Gurobi call (skipped entirely on cache hits upstream in
+    // BaoProblem, since those never reach solve()) -- a sanity check the
+    // project's advisor asked for explicitly: confirms each solve is
+    // actually built from fresh per-configuration data, not silently
+    // reusing the same matrix across different active-angle sets.
+    void setVerbose(bool v) { verbose_ = v; }
+
 private:
+    struct OrganBounds { std::string name; int row_off; int n_boxets; };
+
     const IFmoDataSource& source_;
     bool ready_;
+    bool verbose_ = false;
 
     int n_ptv_, n_oar_;
     std::vector<double> dmin_;      // per PTV boxet row, length n_ptv_
     std::vector<double> dmax_;      // per OAR boxet row, length n_oar_
     std::vector<double> dmax_ptv_;  // per PTV boxet row, length n_ptv_
+    std::vector<OrganBounds> ptv_bounds_;  // per-organ row ranges within dmin_/dmax_ptv_
+    std::vector<OrganBounds> oar_bounds_;  // per-organ row ranges within dmax_
 
     std::unique_ptr<ampl::AMPL> ampl_;
 
     void precompute();
     void initAmpl();
+    void printSolveDims(int n_active_beamlets,
+                         const std::vector<int>& ptv_nnz,
+                         const std::vector<int>& oar_nnz) const;
 };
 
 } // namespace imrt
