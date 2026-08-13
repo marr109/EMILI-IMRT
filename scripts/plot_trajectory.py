@@ -100,6 +100,25 @@ def plot_convergence(path, records):
     plt.close(fig)
 
 
+def plot_iterations(path, evals, objectives):
+    out_dir = os.path.dirname(path) or "."
+    os.makedirs(out_dir, exist_ok=True)
+
+    best = running_best(objectives)
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.plot(evals, objectives, color="#9aa5b1", linewidth=0.8, alpha=0.6, label="evaluado")
+    ax.step(evals, best, where="post", color="#2f6f9f", linewidth=2, label="mejor hasta el momento")
+    ax.set_xlabel("iteración (evaluación FMO)")
+    ax.set_ylabel("FMO objective")
+    ax.set_title("Objetivo por iteración")
+    ax.legend(loc="upper right")
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
 def build_activity_matrix(angle_sets):
     catalog = sorted({a for s in angle_sets for a in s})
     index = {a: i for i, a in enumerate(catalog)}
@@ -128,6 +147,10 @@ def main(argv=None):
         "--convergence-output",
         help="Optional convergence PNG using only strict improvements.",
     )
+    p.add_argument(
+        "--iterations-output",
+        help="Optional PNG: objective (+ running best) per iteration/evaluation, no heatmap.",
+    )
     args = p.parse_args(argv)
 
     evals, objectives, angle_sets = read_trajectory(args.csv)
@@ -142,12 +165,16 @@ def main(argv=None):
         write_improvements(args.improvements_csv, improvements)
     if args.convergence_output:
         plot_convergence(args.convergence_output, improvements)
+    if args.iterations_output:
+        plot_iterations(args.iterations_output, evals, objectives)
 
     if args.skip_trajectory:
         if args.improvements_csv:
             print("improvements CSV written: {0}".format(args.improvements_csv))
         if args.convergence_output:
             print("convergence plot written: {0}".format(args.convergence_output))
+        if args.iterations_output:
+            print("iterations plot written: {0}".format(args.iterations_output))
         print("  evaluations : {0}".format(len(evals)))
         print("  improvements: {0}".format(len(improvements) - 1))
         print("  best objective: {0:.2f} (eval {1})".format(
@@ -187,6 +214,8 @@ def main(argv=None):
         print("improvements CSV written: {0}".format(args.improvements_csv))
     if args.convergence_output:
         print("convergence plot written: {0}".format(args.convergence_output))
+    if args.iterations_output:
+        print("iterations plot written: {0}".format(args.iterations_output))
     print("  evaluations : {0}".format(len(evals)))
     print("  improvements: {0}".format(len(improvements) - 1))
     print("  best objective: {0:.2f} (eval {1})".format(
