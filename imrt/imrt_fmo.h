@@ -37,6 +37,21 @@ namespace imrt {
  * the constructor) since BAO calls solve() potentially thousands of times;
  * only the per-solve data (active dimlets, sparse dose sets) is refreshed.
  */
+/**
+ * Resultado de un solve(): intensidades + objetivo agregado + el desglose
+ * por órgano que el objetivo agregado esconde (u_b/v_b, ver fmo.mod). Cada
+ * entrada de ptv_underdose_sq/oar_overdose_sq es sum(u_b^2) / sum(v_b^2)
+ * sobre los boxets de ESE órgano — mismas unidades y mismo orden que
+ * ptvOrganNames()/oarOrganNames(), así que zip(nombre, valor) da el
+ * desglose completo sin ambigüedad.
+ */
+struct FmoResult {
+    std::vector<double> intensities;
+    double objective;
+    std::vector<double> ptv_underdose_sq;  // por órgano PTV, mismo orden que ptvOrganNames()
+    std::vector<double> oar_overdose_sq;   // por órgano OAR, mismo orden que oarOrganNames()
+};
+
 class ImrtFmoSolver {
 public:
     explicit ImrtFmoSolver(const IFmoDataSource& source);
@@ -44,12 +59,15 @@ public:
 
     // Solve FMO for the given active angle indices (0-based, into the BAO
     // angle catalog -- same indexing convention the data source expects).
-    // Returns { x (length source.n_dimlets(), zero for inactive), objective f* }.
-    std::pair<std::vector<double>, double>
-    solve(const std::vector<int>& active_angles);
+    FmoResult solve(const std::vector<int>& active_angles);
 
     int nBeamlets() const { return source_.n_dimlets(); }
     bool isReady()  const { return ready_; }
+
+    // Nombres de órganos en el mismo orden que los vectores de FmoResult —
+    // constantes durante toda la corrida (fijados en precompute()).
+    std::vector<std::string> ptvOrganNames() const;
+    std::vector<std::string> oarOrganNames() const;
 
     // When on, solve() prints per-organ boxet/dose-entry counts before each
     // real Gurobi call (skipped entirely on cache hits upstream in

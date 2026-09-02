@@ -141,14 +141,36 @@ void ImrtFmoSolver::initAmpl()
 }
 
 /*---------------------------------------------------------------------------*
+ * Nombres de órgano, mismo orden que precompute() usó para construir
+ * ptv_bounds_/oar_bounds_ (y por lo tanto el mismo orden en que solve()
+ * agrega ptv_underdose_sq/oar_overdose_sq).
+ *---------------------------------------------------------------------------*/
+std::vector<std::string> ImrtFmoSolver::ptvOrganNames() const
+{
+    std::vector<std::string> names;
+    names.reserve(ptv_bounds_.size());
+    for (const auto& b : ptv_bounds_) names.push_back(b.name);
+    return names;
+}
+
+std::vector<std::string> ImrtFmoSolver::oarOrganNames() const
+{
+    std::vector<std::string> names;
+    names.reserve(oar_bounds_.size());
+    for (const auto& b : oar_bounds_) names.push_back(b.name);
+    return names;
+}
+
+/*---------------------------------------------------------------------------*
  * solve — refresh the per-solve data (active dimlets, sparse dose sets) and
  * resolve with Gurobi.
  *---------------------------------------------------------------------------*/
-std::pair<std::vector<double>, double>
-ImrtFmoSolver::solve(const std::vector<int>& active_angles)
+FmoResult ImrtFmoSolver::solve(const std::vector<int>& active_angles)
 {
     if (!ready_)
-        return {std::vector<double>(source_.n_dimlets(), 0.0), 1e30};
+        return {std::vector<double>(source_.n_dimlets(), 0.0), 1e30,
+                std::vector<double>(ptv_bounds_.size(), 0.0),
+                std::vector<double>(oar_bounds_.size(), 0.0)};
 
     std::vector<int> active = source_.activeDimletIds(active_angles);
 
@@ -210,10 +232,40 @@ ImrtFmoSolver::solve(const std::vector<int>& active_angles)
         for (int j : active)
             x_full[j] = xvar.get(ampl::Variant((double)j)).value();
 
-        return {x_full, f};
+        // Desglose por órgano de lo que el objetivo agregado esconde: suma
+        // de u_b^2 (subdosis PTV) y v_b^2 (sobredosis OAR) sobre los boxets
+        // de cada órgano. Mismas variables que ya arma fmo.mod, solo que acá
+        // se leen y se agregan por órgano en vez de sumarlas todas en una.
+        ampl::Variable uvar = ampl_->getVariable("u");
+        std::vector<double> ptv_underdose_sq(ptv_bounds_.size(), 0.0);
+        for (size_t oi = 0; oi < ptv_bounds_.size(); ++oi) {
+            const OrganBounds& b = ptv_bounds_[oi];
+            double acc = 0.0;
+            for (int row = b.row_off; row < b.row_off + b.n_boxets; ++row) {
+                double u = uvar.get(ampl::Variant((double)row)).value();
+                acc += u * u;
+            }
+            ptv_underdose_sq[oi] = acc;
+        }
+
+        ampl::Variable vvar = ampl_->getVariable("v");
+        std::vector<double> oar_overdose_sq(oar_bounds_.size(), 0.0);
+        for (size_t oi = 0; oi < oar_bounds_.size(); ++oi) {
+            const OrganBounds& b = oar_bounds_[oi];
+            double acc = 0.0;
+            for (int row = b.row_off; row < b.row_off + b.n_boxets; ++row) {
+                double v = vvar.get(ampl::Variant((double)row)).value();
+                acc += v * v;
+            }
+            oar_overdose_sq[oi] = acc;
+        }
+
+        return {x_full, f, ptv_underdose_sq, oar_overdose_sq};
     } catch (const std::exception& e) {
         std::cerr << "[FMO] ERROR: AMPL/Gurobi solve failed: " << e.what() << "\n";
-        return {std::vector<double>(source_.n_dimlets(), 0.0), 1e30};
+        return {std::vector<double>(source_.n_dimlets(), 0.0), 1e30,
+                std::vector<double>(ptv_bounds_.size(), 0.0),
+                std::vector<double>(oar_bounds_.size(), 0.0)};
     }
 }
 
