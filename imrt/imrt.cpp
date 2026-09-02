@@ -11,6 +11,9 @@ namespace imrt {
  * ImrtProblem
  *---------------------------------------------------------------------------*/
 
+// Solo se penalizan las violaciones (cuadrático, de un solo lado): un boxet
+// PTV en o por encima de Dmin, o un boxet OAR en o por debajo de Dmax, aporta 0.
+// Ejemplo: Dmin=65 Gy, un boxet PTV con dosis=60 Gy -> under=5 -> +w_under*25 a f.
 double ImrtProblem::calcObjectiveFunctionValue(emili::Solution &solution) {
   ImrtSolution &sol = static_cast<ImrtSolution &>(solution);
   const std::vector<double> &x = sol.getIntensities();
