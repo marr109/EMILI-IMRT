@@ -21,7 +21,7 @@ vs. "¿qué tan bien rescata el ILS con reintentos?". Para aislar el efecto de
 la estrategia de búsqueda local, se corre la búsqueda local sola, hasta su
 propio óptimo local, y ahí termina.
 
-Existe un experimento anterior (`experiments/random_init_first_vs_best/`) que
+Existe un experimento anterior (`experiments/_legacy/random_init_first_vs_best/`) que
 sí usaba `ils ... tmaxiter 10 ... prangswap 1 improve` — **no es parte de este
 análisis**, quedó como corrida exploratoria previa con una metodología distinta
 (y con un tope arbitrario de iteraciones en vez de convergencia real).
