@@ -8,7 +8,7 @@ Documentación técnica completa (referencia, no hace falta leerla entera antes
 de la reunión):
 - `docs/ampl-gurobi-integration.md` — cómo se integró AMPL/Gurobi, el `.mod`, la función objetivo.
 - `docs/cerr-prostate-instance-analysis.md` — análisis completo de la instancia nueva.
-- `experiments/local_search_first_vs_best/ANALYSIS.md` — comparación First vs Best.
+- `experiments/local_search/nangshift10/unrestricted/ANALYSIS.md` — comparación First vs Best.
 
 ---
 

@@ -137,6 +137,53 @@ Gurobi 13.0.2: optimal solution; objective 105862.3337
   esto **sí** depende de qué ángulos están prendidos, porque cada ángulo
   ilumina un conjunto distinto de vóxeles.
 
+### `entradas_dosis` en detalle — qué es y por qué es tan chico frente al máximo teórico
+
+`entradas_dosis` es un **conteo de pares** (vóxel, beamlet) — no es una
+dosis, no son vóxeles ni beamlets por separado. Es la cantidad de veces que
+se cumple *"este beamlet específico deposita algo de dosis medible en este
+vóxel específico de ese órgano"*, sumado sobre todos los beamlets activos.
+En el código (`imrt_fmo.cpp::solve()`), por cada beamlet activo `j` se
+consulta `source_.ptvDoseFor(j)` / `oarDoseFor(j)` — la lista de vóxeles a
+los que ESE beamlet le deposita dosis no-nula (viene filtrado de los
+archivos crudos `<ORGANO>_<ángulo>.txt`, ver
+`docs/cerr-prostate-instance-analysis.md`) — y se suma un conteo por cada
+par encontrado.
+
+**Por qué queda tan lejos del máximo teórico** (`boxets × beamlets_activos`).
+Con el primer ejemplo de la traza (`beamlets_activos=280`,
+`PTV PTVHD: boxets=2518 entradas_dosis=228087`):
+
+- Máximo teórico si cada beamlet tocara cada vóxel: 2518 × 280 = 705 040 pares.
+- Real: 228 087 pares → densidad ≈ 32%, consistente con lo ya medido en el
+  análisis de la instancia.
+
+Dos razones, ambas necesarias para explicarlo:
+
+1. **Geométrica** — un beamlet es un rayo angosto que sale desde un único
+   ángulo del gantry y atraviesa el cuerpo en una trayectoria casi recta.
+   No puede estar "cerca" simultáneamente de las 2518 baldosas de PTVHD,
+   porque muchas quedan espacialmente lejos de esa línea recta. Se ve desde
+   los dos lados y da la misma conclusión: en promedio, cada beamlet toca
+   ~815 de los 2518 vóxeles (228 087 ÷ 280), y cada vóxel recibe dosis de
+   solo ~91 de los 280 beamlets activos (228 087 ÷ 2518) — nunca de todos.
+2. **Física (caída de dosis con la distancia)** — aunque un rayo pase cerca
+   de un vóxel, la dosis depositada cae rápido con la distancia (scatter).
+   Confirmado con datos reales: el `dose_rate` mínimo que aparece en los
+   archivos ya es bien chico (7.55e-04 para BLADDER, 1.11e-03 para PTVHD,
+   en Gy por unidad de intensidad) — el archivo sí guarda valores minúsculos
+   cuando existen, no es un corte agresivo tipo "si es chico, lo tiro".
+
+**Pregunta abierta, sin verificar — vale la pena preguntarle al profesor:**
+¿cuál es el mecanismo exacto por el que CERR decide que un par (vóxel,
+beamlet) ni siquiera se calcula? Lo más probable, por cómo funcionan
+típicamente los algoritmos de cálculo de dosis en radioterapia (kernels de
+pencil-beam o de scatter), es que el cálculo tiene un **radio de influencia
+finito** — más allá de cierta distancia del eje del rayo, el algoritmo
+directamente no calcula nada, en vez de calcular un valor ínfimo y
+descartarlo después. Pero eso es la explicación física general del
+fenómeno, no algo confirmado línea por línea contra el código de CERR.
+
 ## Qué se supone que confirma esto (cómo leerlo)
 
 Es un chequeo de cordura, no una métrica de calidad de la solución. Lo que

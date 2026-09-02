@@ -12,6 +12,6 @@ int main()
     }
     auto res = solver.solve({0, 90, 180, 270});
     std::cout.precision(6);
-    std::cout << "objective: " << std::fixed << res.second << std::endl;
+    std::cout << "objective: " << std::fixed << res.objective << std::endl;
     return 0;
 }
