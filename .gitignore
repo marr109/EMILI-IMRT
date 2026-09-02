@@ -109,3 +109,6 @@ Backup[ ]of[ ]*.numbers/
 ampl_gurobi/.venv/
 *.lic
 !ampl_gurobi/*.mod
+# raw clinical/course data dumps, not project artifacts
+archivos_profe/
+x/
