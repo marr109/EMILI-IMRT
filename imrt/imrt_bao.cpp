@@ -18,8 +18,10 @@ emili::Solution* BaoSolution::clone()
     BaoSolution* s = new BaoSolution(active_angles_, (int)intensities_.size());
 
     // Copia los vectores por valor — el clon es independiente del original
-    s->angle_degrees_ = angle_degrees_;
-    s->intensities_   = intensities_;
+    s->angle_degrees_    = angle_degrees_;
+    s->intensities_      = intensities_;
+    s->ptv_underdose_sq_ = ptv_underdose_sq_;
+    s->oar_overdose_sq_  = oar_overdose_sq_;
 
     // Copia el valor objetivo para no pagar otra evaluación FMO
     s->solution_value = solution_value;
@@ -54,8 +56,15 @@ void BaoProblem::openCsvLog(const std::string& path)
 {
     csv_file_.open(path);
     if (csv_file_.is_open()) {
-        // `cached` distingue una visita de una resolución FMO nueva.
-        csv_file_ << "eval,angles_deg,objective,cached\n";
+        // `cached` distingue una visita de una resolución FMO nueva. Después
+        // vienen dos columnas por órgano: ptv_<nombre>_u2 (subdosis al
+        // cuadrado, el término que aporta ese PTV a w_under*sum(u^2)) y
+        // oar_<nombre>_v2 (sobredosis al cuadrado, término de w_over*sum(v^2))
+        // — el desglose que el objetivo agregado no muestra por sí solo.
+        csv_file_ << "eval,angles_deg,objective,cached";
+        for (const auto& name : ptvOrganNames()) csv_file_ << ",ptv_" << name << "_u2";
+        for (const auto& name : oarOrganNames()) csv_file_ << ",oar_" << name << "_v2";
+        csv_file_ << "\n";
         std::cout << "  CSV log: " << path << "\n";
     } else {
         // Falla silenciosa: el algoritmo continúa sin log si el archivo no se puede abrir
@@ -75,25 +84,32 @@ double BaoProblem::calcObjectiveFunctionValue(emili::Solution& s)
 
     auto cached = fmo_cache_.find(cache_key);
     if (cached != fmo_cache_.end()) {
-        bs.intensities_ = cached->second.intensities;
+        bs.intensities_      = cached->second.intensities;
+        bs.ptv_underdose_sq_ = cached->second.ptv_underdose_sq;
+        bs.oar_overdose_sq_  = cached->second.oar_overdose_sq;
         last_eval_cached_ = true;
         return cached->second.objective;
     }
 
     // Llamada más costosa del sistema: resuelve el FMO con los ángulos activos.
-    // Devuelve par<intensidades, valor_objetivo>
-    auto res = fmo_.solve(bs.active_angles_);
+    FmoResult res = fmo_.solve(bs.active_angles_);
 
-    // Guarda objetivo e intensidades para evitar futuras llamadas idénticas al solver FMO.
+    // Guarda objetivo, intensidades y desglose por órgano para evitar
+    // futuras llamadas idénticas al solver FMO.
     CachedFmoResult entry;
-    entry.intensities = std::move(res.first);
-    entry.objective = res.second;
+    entry.intensities      = std::move(res.intensities);
+    entry.objective        = res.objective;
+    entry.ptv_underdose_sq = std::move(res.ptv_underdose_sq);
+    entry.oar_overdose_sq  = std::move(res.oar_overdose_sq);
     auto inserted = fmo_cache_.insert(std::make_pair(cache_key, std::move(entry)));
 
-    bs.intensities_ = inserted.first->second.intensities;
+    bs.intensities_      = inserted.first->second.intensities;
+    bs.ptv_underdose_sq_ = inserted.first->second.ptv_underdose_sq;
+    bs.oar_overdose_sq_  = inserted.first->second.oar_overdose_sq;
     last_eval_cached_ = false;
 
-    // Devuelve solo el valor numérico del objetivo; las intensidades quedan en bs
+    // Devuelve solo el valor numérico del objetivo; las intensidades y el
+    // desglose por órgano quedan en bs
     return inserted.first->second.objective;
 }
 
@@ -134,7 +150,11 @@ double BaoProblem::evaluateSolution(emili::Solution& s)
         }
         // 6 decimales en CSV — más precisión que el display en consola
         csv_file_ << "\"," << std::fixed << std::setprecision(6) << f
-                  << "," << (last_eval_cached_ ? "true" : "false") << "\n";
+                  << "," << (last_eval_cached_ ? "true" : "false");
+        // Desglose por órgano, mismo orden que el encabezado armó en openCsvLog
+        for (double u2 : bs.ptv_underdose_sq_) csv_file_ << "," << std::setprecision(6) << u2;
+        for (double v2 : bs.oar_overdose_sq_)  csv_file_ << "," << std::setprecision(6) << v2;
+        csv_file_ << "\n";
         // flush fuerza escritura al disco — útil si el proceso se interrumpe
         csv_file_.flush();
     }
@@ -148,14 +168,21 @@ emili::Solution* FirstKAnglesInit::generateEmptySolution()
 {
     // Ordena índices, no el catálogo: bao_.angleDegree() mantiene su
     // correspondencia con las matrices de dosis cargadas para cada ángulo.
-    std::vector<int> degree_order(bao_.nAngles());
-    for (int i = 0; i < bao_.nAngles(); ++i) degree_order[i] = i;
+    // Filtra a múltiplos de 5 por el mismo motivo que RandomKAnglesInit: si
+    // el punto de partida no cae en la reja de 5° que usa el vecindario de
+    // shift, el espacio alcanzable queda desfasado según la estrategia de
+    // inicialización usada, y las comparaciones dejan de ser sobre el mismo
+    // espacio de búsqueda.
+    std::vector<int> degree_order;
+    for (int i = 0; i < bao_.nAngles(); ++i) {
+        if (bao_.angleDegree(i) % 5 == 0) degree_order.push_back(i);
+    }
     std::sort(degree_order.begin(), degree_order.end(),
         [this](int a, int b) { return bao_.angleDegree(a) < bao_.angleDegree(b); });
 
-    // Selecciona los K ángulos de menor grado real. Por ejemplo, en el
-    // catálogo de 36 ángulos produce 0°, 10°, 20°, 30° aunque el archivo
-    // de configuración esté ordenado lexicográficamente.
+    // Selecciona los K ángulos de menor grado real (ya filtrados a múltiplos
+    // de 5). Por ejemplo, en el catálogo de CERR_Prostate produce
+    // 0°, 5°, 10°, 15° para K=4.
     std::vector<int> angles(degree_order.begin(),
                             degree_order.begin() + bao_.K());
     std::sort(angles.begin(), angles.end());
@@ -176,22 +203,29 @@ emili::Solution* FirstKAnglesInit::generateSolution()
 
 emili::Solution* RandomKAnglesInit::generateEmptySolution()
 {
-    int n = bao_.nAngles();  // total de ángulos candidatos en el catálogo
-    int K = bao_.K();                     // cuántos ángulos debe tener la solución
+    int K = bao_.K();  // cuántos ángulos debe tener la solución
 
-    // Crea una permutación completa [0, 1, 2, ..., n-1]
-    std::vector<int> perm(n);
-    for (int i = 0; i < n; ++i) perm[i] = i;
+    // Restringe el pool a índices cuyo grado real es múltiplo de 5: si el
+    // vecindario de shift avanza en pasos múltiplos de 5, la solución inicial
+    // debe partir en esa misma reja, o el espacio alcanzable por shift queda
+    // desfasado según el punto de partida (y las comparaciones entre corridas
+    // dejan de ser sobre el mismo espacio de búsqueda).
+    std::vector<int> pool;
+    for (int i = 0; i < bao_.nAngles(); ++i) {
+        if (bao_.angleDegree(i) % 5 == 0) pool.push_back(i);
+    }
+    int n = (int)pool.size();
 
-    // Fisher-Yates parcial: mezcla solo los primeros K elementos — O(K) en vez de O(n)
-    // No se usa std::shuffle porque emili::generateRandomNumber() no es compatible con std
+    // Fisher-Yates parcial sobre el pool filtrado: mezcla solo los primeros K
+    // elementos — O(K) en vez de O(n). No se usa std::shuffle porque
+    // emili::generateRandomNumber() no es compatible con std.
     for (int i = 0; i < K; ++i) {
         int j = i + emili::generateRandomNumber() % (n - i);  // índice aleatorio en [i, n-1]
-        std::swap(perm[i], perm[j]);
+        std::swap(pool[i], pool[j]);
     }
 
     // Toma los primeros K elementos mezclados como ángulos activos
-    std::vector<int> angles(perm.begin(), perm.begin() + K);
+    std::vector<int> angles(pool.begin(), pool.begin() + K);
 
     // Ordena los índices para mantener consistencia con el resto del algoritmo
     std::sort(angles.begin(), angles.end());
@@ -450,13 +484,31 @@ emili::Solution* AngleShiftNeighborhood::random(emili::Solution* s)
     std::vector<bool> active_flag(n_angles_, false);
     for (int a : bs->active_angles_) active_flag[a] = true;
 
-    int step_mod = ((step_ % n_angles_) + n_angles_) % n_angles_;
+    // step_ define la escala de la perturbación, no su valor exacto: un
+    // desplazamiento de magnitud constante preserva el residuo módulo step_
+    // del ángulo durante TODA la corrida de ILS si coincide con el step del
+    // vecindario de búsqueda local (nangshift) — la perturbación quedaría
+    // atrapada en la misma clase módulo step_ que le tocó al ángulo en la
+    // inicialización, sin poder escapar nunca de ella. Además, una magnitud
+    // menor o igual a step_ es un desplazamiento débil: cae dentro (o al
+    // borde) del alcance de un solo paso de la búsqueda local, que puede
+    // reconverger casi de inmediato al mismo óptimo. Por eso la magnitud se
+    // sortea en (step_, 2*step_): siempre estrictamente mayor que un paso de
+    // búsqueda local (sale genuinamente de ese vecindario) y nunca múltiplo
+    // de step_ (rompe la invariante de residuo, garantizado).
+    int base_step = ((step_ % n_angles_) + n_angles_) % n_angles_;
+    if (base_step < 1) base_step = 1;
+    int span = base_step - 1;   // cuántos valores hay en (base_step, 2*base_step)
+    if (span < 1) span = 1;     // step_ muy chico (1): no hay hueco real, degrada a [1, n_angles_-1]
 
-    // Reintento acotado: prueba unas pocas combinaciones (ángulo, dirección) al azar
+    // Reintento acotado: prueba unas pocas combinaciones (ángulo, dirección, magnitud) al azar
     const int max_attempts = 8;
     for (int attempt = 0; attempt < max_attempts; ++attempt) {
-        int ai  = emili::generateRandomNumber() % bs->active_angles_.size();
-        int dir = emili::generateRandomNumber() % 2;
+        int ai       = emili::generateRandomNumber() % bs->active_angles_.size();
+        int dir      = emili::generateRandomNumber() % 2;
+        int step_mod = (base_step > 1)
+            ? base_step + 1 + (emili::generateRandomNumber() % span)
+            : 1 + (emili::generateRandomNumber() % (n_angles_ - 1));
 
         int active_catalog_idx = bs->active_angles_[ai];
         int pos     = degree_rank_[active_catalog_idx];
@@ -478,6 +530,227 @@ emili::Solution* AngleShiftNeighborhood::random(emili::Solution* s)
 
     // No se encontró un movimiento válido tras los reintentos: devuelve clon sin cambios
     return s->clone();
+}
+
+//=== Vecindario: shift de ángulos, múltiples steps (versión inclusiva) =======
+
+void AngleMultiShiftNeighborhood::buildDegreeOrder()
+{
+    // Idéntico a AngleShiftNeighborhood::buildDegreeOrder — ver ese comentario.
+    degree_order_.resize(n_angles_);
+    for (int i = 0; i < n_angles_; ++i) degree_order_[i] = i;
+    std::sort(degree_order_.begin(), degree_order_.end(),
+        [this](int a, int b) { return bao_.angleDegree(a) < bao_.angleDegree(b); });
+
+    degree_rank_.resize(n_angles_);
+    for (int pos = 0; pos < n_angles_; ++pos) degree_rank_[degree_order_[pos]] = pos;
+}
+
+int AngleMultiShiftNeighborhood::size()
+{
+    // Cota superior: 2 movimientos (±step) por cada ángulo activo, por cada step
+    // de la lista. El conteo real puede ser menor por colisiones.
+    return 2 * bao_.K() * (int)steps_.size();
+}
+
+emili::Neighborhood::NeighborhoodIterator
+AngleMultiShiftNeighborhood::begin(emili::Solution* base)
+{
+    BaoSolution* bs = static_cast<BaoSolution*>(base);
+    base_angles_ = bs->active_angles_;
+
+    buildDegreeOrder();
+
+    // Orden de generación:
+    //   slot 0, step steps_[0]: -step, +step
+    //   slot 0, step steps_[1]: -step, +step
+    //   ...
+    //   slot 1, step steps_[0]: -step, +step
+    //   ...
+    cur_active_idx_ = 0;
+    cur_step_idx_   = 0;
+    cur_dir_        = 0;    // 0: resta; 1: suma
+    first_          = true;
+
+    return emili::Neighborhood::NeighborhoodIterator(this, base);
+}
+
+void AngleMultiShiftNeighborhood::reset()
+{
+    cur_active_idx_ = 0;
+    cur_step_idx_   = 0;
+    cur_dir_        = 0;
+    first_          = true;
+}
+
+emili::Solution* AngleMultiShiftNeighborhood::computeStep(emili::Solution* step)
+{
+    // Mismo esqueleto que AngleShiftNeighborhood::computeStep, con una
+    // dimensión extra de avance: dirección -> step de la lista -> slot activo.
+    BaoSolution* bs = static_cast<BaoSolution*>(step);
+
+    while (true) {
+        if (!first_) {
+            ++cur_dir_;
+            if (cur_dir_ >= 2) {
+                cur_dir_ = 0;
+                ++cur_step_idx_;
+                if (cur_step_idx_ >= (int)steps_.size()) {
+                    cur_step_idx_ = 0;
+                    ++cur_active_idx_;
+                }
+            }
+        }
+        first_ = false;
+
+        // No quedan combinaciones (slot, step, dirección): termina el iterador.
+        if (cur_active_idx_ >= (int)base_angles_.size()) return nullptr;
+
+        int active_catalog_idx = base_angles_[cur_active_idx_];
+        int pos = degree_rank_[active_catalog_idx];
+
+        int step_mod = ((steps_[cur_step_idx_] % n_angles_) + n_angles_) % n_angles_;
+        int new_pos = (cur_dir_ == 0)
+            ? (pos - step_mod + n_angles_) % n_angles_
+            : (pos + step_mod) % n_angles_;
+        int candidate = degree_order_[new_pos];
+
+        // Colisión con otro slot activo, o con el propio ángulo del slot
+        // (puede pasar si dos steps distintos generan el mismo candidato):
+        // se omite y el while sigue con la siguiente combinación.
+        bool collision = false;
+        for (int a : base_angles_) {
+            if (a == candidate) { collision = true; break; }
+        }
+        if (collision) continue;
+
+        bs->active_angles_ = base_angles_;
+        bs->active_angles_[cur_active_idx_] = candidate;
+
+        bao_.evaluateSolution(*bs);
+        return bs;
+    }
+}
+
+void AngleMultiShiftNeighborhood::reverseLastMove(emili::Solution* step)
+{
+    BaoSolution* bs = static_cast<BaoSolution*>(step);
+    bs->active_angles_ = base_angles_;
+}
+
+emili::Solution* AngleMultiShiftNeighborhood::random(emili::Solution* s)
+{
+    // No participa en `first ... nangshiftmulti` ni en `best ... nangshiftmulti`
+    // (igual que AngleShiftNeighborhood::random) — ver ese comentario.
+    BaoSolution* bs = static_cast<BaoSolution*>(s);
+
+    if ((int)degree_order_.size() != n_angles_) buildDegreeOrder();
+
+    std::vector<bool> active_flag(n_angles_, false);
+    for (int a : bs->active_angles_) active_flag[a] = true;
+
+    const int max_attempts = 8;
+    for (int attempt = 0; attempt < max_attempts; ++attempt) {
+        int ai       = emili::generateRandomNumber() % bs->active_angles_.size();
+        int step_idx = emili::generateRandomNumber() % steps_.size();
+        int dir      = emili::generateRandomNumber() % 2;
+
+        int active_catalog_idx = bs->active_angles_[ai];
+        int pos       = degree_rank_[active_catalog_idx];
+        int step_mod  = ((steps_[step_idx] % n_angles_) + n_angles_) % n_angles_;
+        int new_pos   = (dir == 0)
+            ? (pos - step_mod + n_angles_) % n_angles_
+            : (pos + step_mod) % n_angles_;
+        int candidate = degree_order_[new_pos];
+
+        if (active_flag[candidate]) continue;
+
+        BaoSolution* nb = static_cast<BaoSolution*>(s->clone());
+        nb->active_angles_[ai] = candidate;
+        bao_.evaluateSolution(*nb);
+        return nb;
+    }
+
+    return s->clone();
+}
+
+//=== Perturbación: shift multi-ángulo, slots distintos ========================
+
+void AngleShiftMultiPerturbation::buildDegreeOrder()
+{
+    // Idéntico a AngleShiftNeighborhood::buildDegreeOrder — ver ese comentario.
+    degree_order_.resize(n_angles_);
+    for (int i = 0; i < n_angles_; ++i) degree_order_[i] = i;
+    std::sort(degree_order_.begin(), degree_order_.end(),
+        [this](int a, int b) { return bao_.angleDegree(a) < bao_.angleDegree(b); });
+
+    degree_rank_.resize(n_angles_);
+    for (int pos = 0; pos < n_angles_; ++pos) degree_rank_[degree_order_[pos]] = pos;
+}
+
+emili::Solution* AngleShiftMultiPerturbation::perturb(emili::Solution* solution)
+{
+    if ((int)degree_order_.size() != n_angles_) buildDegreeOrder();
+
+    BaoSolution* nb = static_cast<BaoSolution*>(solution->clone());
+    int K = (int)nb->active_angles_.size();
+    int n_moves = std::min(numSteps_, K);   // no se puede mover más ángulos distintos que K
+
+    // Permutación de slots (Fisher-Yates): garantiza n_moves slots DISTINTOS,
+    // a diferencia de n_moves sorteos independientes con reposición que
+    // pueden repetir el mismo slot (y terminar moviendo un solo ángulo en
+    // vez de varios — el bug que se detectó revisando datos reales).
+    std::vector<int> slot_order(K);
+    for (int i = 0; i < K; ++i) slot_order[i] = i;
+    for (int i = K - 1; i > 0; --i) {
+        int j = emili::generateRandomNumber() % (i + 1);
+        std::swap(slot_order[i], slot_order[j]);
+    }
+
+    // Magnitud aleatoria en (step_, 2*step_): igual razón que en
+    // AngleShiftNeighborhood::random — nunca step_ exacto, para no quedar
+    // atrapado en la misma clase módulo step_ que usa la búsqueda local.
+    int base_step = ((step_ % n_angles_) + n_angles_) % n_angles_;
+    if (base_step < 1) base_step = 1;
+    int span = base_step - 1;
+    if (span < 1) span = 1;
+
+    std::vector<bool> active_flag(n_angles_, false);
+    for (int a : nb->active_angles_) active_flag[a] = true;
+
+    for (int m = 0; m < n_moves; ++m) {
+        int ai = slot_order[m];
+        const int max_attempts = 8;
+        for (int attempt = 0; attempt < max_attempts; ++attempt) {
+            int dir = emili::generateRandomNumber() % 2;
+            int step_mod = (base_step > 1)
+                ? base_step + 1 + (emili::generateRandomNumber() % span)
+                : 1 + (emili::generateRandomNumber() % (n_angles_ - 1));
+
+            int active_catalog_idx = nb->active_angles_[ai];
+            int pos = degree_rank_[active_catalog_idx];
+            int new_pos = (dir == 0)
+                ? (pos - step_mod + n_angles_) % n_angles_
+                : (pos + step_mod) % n_angles_;
+            int candidate = degree_order_[new_pos];
+
+            if (active_flag[candidate]) continue;   // colisión: reintenta
+
+            active_flag[active_catalog_idx] = false;
+            active_flag[candidate] = true;
+            nb->active_angles_[ai] = candidate;
+            break;
+        }
+    }
+
+    // Una sola resolución FMO al final, con los n_moves ángulos ya
+    // desplazados — los estados intermedios (después del 1er, 2do... giro)
+    // nunca se usan para decidir nada, evaluarlos aparte solo gastaba
+    // resoluciones de más sin aportar al algoritmo (quedó así al principio
+    // para poder auditar cada movimiento por separado; ya verificado que la
+    // lógica de slots distintos funciona bien, no hace falta mantenerlo).
+    bao_.evaluateSolution(*nb);
+    return nb;
 }
 
 //=== Perturbación =============================================================
@@ -515,6 +788,39 @@ emili::Solution* RandomAnglesPerturbation::perturb(emili::Solution* current)
     std::sort(bs->active_angles_.begin(), bs->active_angles_.end());
     bao_.evaluateSolution(*bs);
     return bs;
+}
+
+//=== Aceptación ================================================================
+
+emili::Solution* BaoImproveAccept::accept(emili::Solution* current,
+                                           emili::Solution* candidate)
+{
+    bool improves = (*candidate < *current);
+    if (!reject_repeated_) {
+        return improves ? candidate : current;
+    }
+
+    // current siempre queda registrado, sin importar si mejora — así una
+    // solución ya visitada se reconoce aunque se vuelva a alcanzar como
+    // "current" en una iteración posterior.
+    const BaoSolution* bc_cur = static_cast<const BaoSolution*>(current);
+    visited_.insert(bc_cur->active_angles_);
+
+    const BaoSolution* bc_cand = static_cast<const BaoSolution*>(candidate);
+    if (improves && visited_.count(bc_cand->active_angles_)) {
+        // candidate repite un conjunto de ángulos ya explorado — se rechaza
+        // aunque mejore, para que ILS siga diversificando en vez de volver
+        // a asentarse en un óptimo local ya conocido. Se imprime siempre
+        // (no solo en verbose_) porque ocurre a lo sumo una vez por
+        // iteración externa del ILS, no por cada evaluación FMO.
+        std::cout << "  BAO accept: candidate f=" << std::fixed << std::setprecision(2)
+                   << candidate->getSolutionValue()
+                   << " repeats a previously visited angle set -- rejected, keeping current\n";
+        return current;
+    }
+
+    visited_.insert(bc_cand->active_angles_);
+    return improves ? candidate : current;
 }
 
 emili::Solution* MultiScaleAngleShake::shake(emili::Solution* s, int k)

@@ -18,9 +18,13 @@
 #define NEIGH_SWAP      "nswap"
 #define NEIGH_ANGSWAP   "nangswap"
 #define NEIGH_ANGSHIFT  "nangshift"
+#define NEIGH_ANGSHIFT_MULTI "nangshiftmulti"
 #define PERT_RANDOM     "prandom"
 #define PERT_ANGSWAP    "prangswap"
+#define PERT_ANGSHIFT   "prangshift"
 #define ACC_IMPROVE     "aimprove"
+#define ACC_BAO_IMPROVE "baoimprove"
+#define ACC_REJECT_REPEATED "rejectrepeated"
 #define TERM_MAXITER    "tmaxiter"
 #define TERM_FEASIBLE   "tfeasible"
 #define TABU_ALL_SOL    "Tabu_all_solution"
@@ -243,6 +247,18 @@ emili::Neighborhood* ImrtBuilder::buildNeighborhood()
             prs::printTabPlusOne("step", step);
             neigh = new emili::imrt::AngleShiftNeighborhood(*prob, step);
         }
+        else if (tm.checkToken(NEIGH_ANGSHIFT_MULTI)) {
+            // Sintaxis: nangshiftmulti <n_steps> <step_1> ... <step_n>
+            // Vecindario "inclusivo": acumula ±step_i para cada step_i de la lista,
+            // en vez de un único step (ver AngleMultiShiftNeighborhood).
+            int n_steps = tm.getInteger();
+            std::vector<int> steps;
+            steps.reserve(n_steps);
+            for (int i = 0; i < n_steps; ++i) steps.push_back(tm.getInteger());
+            prs::printTab("BAO neighborhood: angle shift (multi, inclusive)");
+            for (int s : steps) prs::printTabPlusOne("step", s);
+            neigh = new emili::imrt::AngleMultiShiftNeighborhood(*prob, steps);
+        }
         prs::decrementTabLevel();
         return neigh;
     }
@@ -287,6 +303,20 @@ emili::Perturbation* ImrtBuilder::buildPerturbation()
             prs::printTabPlusOne("D (destroy/rebuild)", D);
             pert = new emili::imrt::GreedyAnglesPerturbation(*prob, D);
         }
+        else if (tm.checkToken(PERT_ANGSHIFT)) {
+            // Sintaxis: prangshift <step> <numSteps>
+            // Perturbación descrita por Leslie: desplaza numSteps ángulos
+            // activos DISTINTOS (no numSteps sorteos con reposición, que
+            // pueden repetir el mismo slot y terminar moviendo un solo
+            // ángulo), cada uno una magnitud aleatoria en (step, 2*step) —
+            // ver AngleShiftMultiPerturbation.
+            int step      = tm.getInteger();
+            int numSteps  = tm.getInteger();
+            prs::printTab("BAO perturbation: multi angle shift (distinct slots)");
+            prs::printTabPlusOne("step", step);
+            prs::printTabPlusOne("numSteps", numSteps);
+            pert = new emili::imrt::AngleShiftMultiPerturbation(*prob, step, numSteps);
+        }
         prs::decrementTabLevel();
         return pert;
     }
@@ -318,6 +348,17 @@ emili::Acceptance* ImrtBuilder::buildAcceptance()
     if (tm.checkToken(ACC_IMPROVE)) {
         prs::printTab("acceptance: improve");
         acc = new emili::imrt::ImrtImproveAccept();
+    }
+    else if (isBaoProblem() && tm.checkToken(ACC_BAO_IMPROVE)) {
+        // Sintaxis: baoimprove [rejectrepeated]
+        // Igual regla "improve" de siempre, pero consciente del conjunto de
+        // ángulos activos (BaoSolution). rejectrepeated es opcional: si está
+        // presente, rechaza un candidato que mejore pero repita un conjunto
+        // de ángulos ya visitado en la corrida — ver BaoImproveAccept.
+        bool reject_repeated = tm.checkToken(ACC_REJECT_REPEATED);
+        prs::printTab("BAO acceptance: improve");
+        prs::printTabPlusOne("reject repeated solutions", reject_repeated ? "true" : "false");
+        acc = new emili::imrt::BaoImproveAccept(reject_repeated);
     }
 
     prs::decrementTabLevel();

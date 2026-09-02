@@ -7,6 +7,7 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -27,6 +28,12 @@ public:
     std::vector<int>    angle_degrees_; // K actual degree values (for display only)
     std::vector<double> intensities_;   // n_beamlets optimal x* from FMO
 
+    // Desglose por órgano del objetivo agregado (ver ImrtFmoSolver::solve /
+    // FmoResult) — mismo orden que BaoProblem::ptvOrganNames()/oarOrganNames().
+    // Vacíos hasta la primera evaluación (generateEmptySolution no evalúa).
+    std::vector<double> ptv_underdose_sq_;
+    std::vector<double> oar_overdose_sq_;
+
     BaoSolution(const std::vector<int>& angles, int n_beamlets)
         : emili::Solution(1e30)
         , active_angles_(angles)
@@ -37,9 +44,11 @@ public:
     virtual void setRawData(const void* data) override {
         if (data == this) return;
         const BaoSolution* o = static_cast<const BaoSolution*>(data);
-        active_angles_ = o->active_angles_;
-        angle_degrees_ = o->angle_degrees_;
-        intensities_   = o->intensities_;
+        active_angles_     = o->active_angles_;
+        angle_degrees_     = o->angle_degrees_;
+        intensities_       = o->intensities_;
+        ptv_underdose_sq_  = o->ptv_underdose_sq_;
+        oar_overdose_sq_   = o->oar_overdose_sq_;
     }
 
     virtual emili::Solution* clone() override;
@@ -60,6 +69,8 @@ class BaoProblem : public emili::Problem {
     struct CachedFmoResult {
         std::vector<double> intensities;
         double objective;
+        std::vector<double> ptv_underdose_sq;
+        std::vector<double> oar_overdose_sq;
     };
 
     std::unique_ptr<IFmoDataSource> source_;  // owned; ImrtFmoSolver holds a ref to this
@@ -86,6 +97,11 @@ public:
     int  nAngles()               const { return (int)angle_degrees_.size(); }
     int  angleDegree(int idx)    const { return angle_degrees_[idx]; }
     int  nDimlets()               const { return source_->n_dimlets(); }
+
+    // Nombres de órgano en el mismo orden que BaoSolution::ptv_underdose_sq_/
+    // oar_overdose_sq_ — usados para armar el encabezado del CSV una sola vez.
+    std::vector<std::string> ptvOrganNames() const { return fmo_.ptvOrganNames(); }
+    std::vector<std::string> oarOrganNames() const { return fmo_.oarOrganNames(); }
 
     void setVerbose(bool v) { verbose_ = v; fmo_.setVerbose(v); }
     bool isReady()          const { return fmo_.isReady(); }
@@ -198,6 +214,80 @@ public:
 };
 
 /*---------------------------------------------------------------------------*
+ *                     ANGLE MULTI-SHIFT NEIGHBORHOOD                        *
+ *                                                                           *
+ * Versión "inclusiva" de AngleShiftNeighborhood: en vez de un único step,   *
+ * recibe una lista de steps (p.ej. {5, 10}) y el vecindario de cada ángulo  *
+ * activo acumula ±cada step de la lista — más vecinos, más caro de evaluar, *
+ * pero ve más del catálogo por ronda. Con steps={s} es equivalente a        *
+ * AngleShiftNeighborhood con step=s.                                        *
+ * Tamaño (cota superior) = 2 × K × steps.size().                            *
+ *---------------------------------------------------------------------------*/
+class AngleMultiShiftNeighborhood : public emili::Neighborhood {
+    BaoProblem& bao_;
+    int         n_angles_;
+    std::vector<int> steps_;
+
+    // Permutación de índices de catálogo ordenados por grado ascendente,
+    // y su lookup inverso (índice de catálogo -> posición en degree_order_)
+    std::vector<int> degree_order_;
+    std::vector<int> degree_rank_;
+
+    // Estado para la iteración
+    std::vector<int> base_angles_;   // ángulos activos al llamar begin()
+    int  cur_active_idx_;            // qué ángulo activo se está desplazando
+    int  cur_step_idx_;              // qué step de steps_ se está probando
+    int  cur_dir_;                   // 0 = -step, 1 = +step
+    bool first_;
+
+    void buildDegreeOrder();
+
+    virtual emili::Solution* computeStep(emili::Solution* step)  override;
+    virtual void reverseLastMove(emili::Solution* step)           override;
+
+public:
+    explicit AngleMultiShiftNeighborhood(BaoProblem& p, std::vector<int> steps)
+        : bao_(p), n_angles_(p.nAngles()), steps_(std::move(steps))
+        , cur_active_idx_(0), cur_step_idx_(0), cur_dir_(0), first_(true)
+    {}
+
+    virtual emili::Neighborhood::NeighborhoodIterator
+            begin(emili::Solution* base) override;
+    virtual void reset() override;
+    virtual emili::Solution* random(emili::Solution* s) override;
+    virtual int size() override;
+};
+
+/*---------------------------------------------------------------------------*
+ *                  ANGLE SHIFT PERTURBATION, multi (for ILS)                *
+ *                                                                           *
+ * Perturbación descrita en la reunión con Leslie: desplaza numSteps         *
+ * ángulos activos DISTINTOS (permutación sin reposición de los slots, no    *
+ * numSteps sorteos independientes que pueden repetir el mismo slot), cada   *
+ * uno una magnitud aleatoria en (step, 2*step) — nunca step exacto, para no *
+ * quedar atrapado en la misma clase módulo step que usa el vecindario de    *
+ * búsqueda local (ver AngleShiftNeighborhood::random).                      *
+ *---------------------------------------------------------------------------*/
+class AngleShiftMultiPerturbation : public emili::Perturbation {
+    BaoProblem& bao_;
+    int         n_angles_;
+    int         step_;
+    int         numSteps_;
+
+    std::vector<int> degree_order_;
+    std::vector<int> degree_rank_;
+
+    void buildDegreeOrder();
+
+public:
+    AngleShiftMultiPerturbation(BaoProblem& bao, int step, int numSteps)
+        : emili::Perturbation(), bao_(bao), n_angles_(bao.nAngles())
+        , step_(step), numSteps_(numSteps) {}
+
+    virtual emili::Solution* perturb(emili::Solution* solution) override;
+};
+
+/*---------------------------------------------------------------------------*
  *                       ANGLE PERTURBATION (for ILS)                        *
  *                                                                           *
  * Randomly replaces p active angles with p inactive angles.                 *
@@ -212,6 +302,28 @@ public:
         : emili::Perturbation(), bao_(bao), p_(p) {}
 
     virtual emili::Solution* perturb(emili::Solution* current) override;
+};
+
+
+/*---------------------------------------------------------------------------*
+ *                      BAO ACCEPTANCE (improve, ILS)                        *
+ *                                                                           *
+ * Standard "accept if strictly better" rule. When reject_repeated_ is set,  *
+ * a candidate whose angle set was already seen earlier in the run is       *
+ * rejected even if it improves on the current solution, so ILS keeps       *
+ * diversifying instead of resettling on a known local optimum.             *
+ *---------------------------------------------------------------------------*/
+class BaoImproveAccept : public emili::Acceptance {
+    bool                           reject_repeated_;
+    std::set<std::vector<int>>     visited_;
+
+public:
+    explicit BaoImproveAccept(bool reject_repeated = false)
+        : reject_repeated_(reject_repeated) {}
+
+    virtual emili::Solution* accept(emili::Solution* current,
+                                     emili::Solution* candidate) override;
+    virtual void reset() override { visited_.clear(); }
 };
 
 
