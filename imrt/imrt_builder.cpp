@@ -1,7 +1,10 @@
 #include "imrt_builder.h"
+#include "cerr_instance.h"
+#include "imrt_fmo_source.h"
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <memory>
 
 // ── Token keywords ────────────────────────────────────────────────────────────
 #define PROBLEM_IMRT    "imrt"
@@ -14,9 +17,14 @@
 #define NEIGH_SHIFT     "nshift"
 #define NEIGH_SWAP      "nswap"
 #define NEIGH_ANGSWAP   "nangswap"
+#define NEIGH_ANGSHIFT  "nangshift"
+#define NEIGH_ANGSHIFT_MULTI "nangshiftmulti"
 #define PERT_RANDOM     "prandom"
 #define PERT_ANGSWAP    "prangswap"
+#define PERT_ANGSHIFT   "prangshift"
 #define ACC_IMPROVE     "aimprove"
+#define ACC_BAO_IMPROVE "baoimprove"
+#define ACC_REJECT_REPEATED "rejectrepeated"
 #define TERM_MAXITER    "tmaxiter"
 #define TERM_FEASIBLE   "tfeasible"
 #define TABU_ALL_SOL    "Tabu_all_solution"
@@ -43,7 +51,6 @@ emili::imrt::ImrtProblem* ImrtBuilder::castProblem()
     return static_cast<emili::imrt::ImrtProblem*>(gp.getInstance());
 }
 
-#ifdef WITH_OSQP
 emili::imrt::BaoProblem* ImrtBuilder::castBaoProblem()
 {
     return dynamic_cast<emili::imrt::BaoProblem*>(gp.getInstance());
@@ -53,7 +60,6 @@ bool ImrtBuilder::isBaoProblem()
 {
     return castBaoProblem() != nullptr;
 }
-#endif
 
 /*---------------------------------------------------------------------------*
  * Problem identification
@@ -62,9 +68,7 @@ bool ImrtBuilder::isBaoProblem()
 bool ImrtBuilder::isCompatibleWith(char* problem_definition)
 {
     if (strcmp(problem_definition, PROBLEM_IMRT) == 0) return true;
-#ifdef WITH_OSQP
     if (strcmp(problem_definition, PROBLEM_BAO)  == 0) return true;
-#endif
     return false;
 }
 
@@ -90,49 +94,58 @@ emili::Problem* ImrtBuilder::openInstance()
     bool is_bao = false;
     int  K      = 0;
 
-#ifdef WITH_OSQP
     {
         char* kw = tm.peek();
         if (kw && strcmp(kw, PROBLEM_BAO) == 0)
             is_bao = true;
     }
-#endif
 
     // Instance directory lives at absolute token index 1 (argv[1]).
     char* dir = tm.tokenAt(1);
     tm.nextToken();   // consume the problem keyword ("imrt" or "baoimrt")
     prs::check(dir, "IMRT: expected path to instance directory");
 
-#ifdef WITH_OSQP
     if (is_bao)
         K = tm.getInteger();   // consume K (number of gantry angles to select)
-#endif
 
-    emili::imrt::ImrtInstance inst;
-    if (!inst.loadFromDirectory(dir)) {
-        std::cerr << "[IMRT] Could not load instance from: " << dir << "\n";
+    // Only the raw CERR export layout (instances/CERR_Prostate) is supported
+    // as an instance format on this branch — the CORT/old-format ImrtInstance
+    // loader was removed once ImrtProblem stopped depending on it.
+    if (!emili::imrt::CerrFmoSource::looksLikeCerrDir(dir)) {
+        std::cerr << "[IMRT] " << dir
+                  << " is not a CERR-format instance directory "
+                     "(beamletIndex.txt not found).\n";
         exit(-1);
     }
 
-    prs::printTabPlusOne("directory", dir);
-    prs::printTabPlusOne("angles",    inst.n_angles);
-    prs::printTabPlusOne("dimlets",   inst.n_dimlets);
-    prs::printTabPlusOne("boxets",    inst.n_boxets_total);
-    prs::printTabPlusOne("organs",    inst.organs.size());
+    auto source = std::unique_ptr<emili::imrt::IFmoDataSource>(
+        new emili::imrt::CerrFmoSource(dir));
+    auto* cerr_src = static_cast<emili::imrt::CerrFmoSource*>(source.get());
+    int n_angles = cerr_src->nAnglesTotal();
 
-#ifdef WITH_OSQP
+    // angle_idx IS the degree value: beamletIndex.txt covers a contiguous
+    // 0..359 range at 1 degree spacing (verified against instances/CERR_Prostate).
+    std::vector<int> angle_degrees(n_angles);
+    for (int i = 0; i < n_angles; ++i) angle_degrees[i] = i;
+
+    prs::printTabPlusOne("directory", dir);
+    prs::printTab("CERR-format instance detected");
+    prs::printTabPlusOne("angles",  n_angles);
+    prs::printTabPlusOne("dimlets", source->n_dimlets());
+
     if (is_bao) {
-        if (K <= 0 || K > inst.n_angles) {
+        if (K <= 0 || K > n_angles) {
             std::cerr << "[BAO] K=" << K << " invalido para "
-                      << inst.n_angles << " angulos\n";
+                      << n_angles << " angulos\n";
             exit(-1);
         }
-        prs::printTab("BAO problem (OSQP-exact FMO + busqueda de angulos)");
+        prs::printTab("BAO problem (angle search)");
         prs::printTabPlusOne("K (angulos activos)", K);
 
-        emili::imrt::BaoProblem* prob = new emili::imrt::BaoProblem(inst, K);
+        emili::imrt::BaoProblem* prob =
+            new emili::imrt::BaoProblem(std::move(source), angle_degrees, K);
         if (!prob->isReady()) {
-            std::cerr << "[BAO] OSQP setup failed\n";
+            std::cerr << "[BAO] FMO solver initialization failed\n";
             exit(-1);
         }
 
@@ -149,11 +162,11 @@ emili::Problem* ImrtBuilder::openInstance()
         }
         return prob;
     }
-#endif
 
     // Classic FMO problem
     prs::printTab("IMRT problem loaded");
-    emili::imrt::ImrtProblem* prob = new emili::imrt::ImrtProblem(inst);
+    emili::imrt::ImrtProblem* prob =
+        new emili::imrt::ImrtProblem(std::move(source), angle_degrees);
 
     if (tm.checkToken(OPT_NACTIVE)) {
         int k = tm.getInteger();
@@ -176,7 +189,6 @@ emili::InitialSolution* ImrtBuilder::buildInitialSolution()
     prs::incrementTabLevel();
     emili::InitialSolution* init = nullptr;
 
-#ifdef WITH_OSQP
     if (isBaoProblem()) {
         emili::imrt::BaoProblem* prob = castBaoProblem();
         if (tm.checkToken(INIT_FIRSTK)) {
@@ -190,7 +202,6 @@ emili::InitialSolution* ImrtBuilder::buildInitialSolution()
         prs::decrementTabLevel();
         return init;
     }
-#endif
 
     emili::imrt::ImrtProblem* prob = castProblem();
 
@@ -224,17 +235,33 @@ emili::Neighborhood* ImrtBuilder::buildNeighborhood()
     prs::incrementTabLevel();
     emili::Neighborhood* neigh = nullptr;
 
-#ifdef WITH_OSQP
     if (isBaoProblem()) {
         emili::imrt::BaoProblem* prob = castBaoProblem();
         if (tm.checkToken(NEIGH_ANGSWAP)) {
             prs::printTab("BAO neighborhood: angle swap");
             neigh = new emili::imrt::AngleSwapNeighborhood(*prob);
         }
+        else if (tm.checkToken(NEIGH_ANGSHIFT)) {
+            int step = tm.getInteger();
+            prs::printTab("BAO neighborhood: angle shift");
+            prs::printTabPlusOne("step", step);
+            neigh = new emili::imrt::AngleShiftNeighborhood(*prob, step);
+        }
+        else if (tm.checkToken(NEIGH_ANGSHIFT_MULTI)) {
+            // Sintaxis: nangshiftmulti <n_steps> <step_1> ... <step_n>
+            // Vecindario "inclusivo": acumula ±step_i para cada step_i de la lista,
+            // en vez de un único step (ver AngleMultiShiftNeighborhood).
+            int n_steps = tm.getInteger();
+            std::vector<int> steps;
+            steps.reserve(n_steps);
+            for (int i = 0; i < n_steps; ++i) steps.push_back(tm.getInteger());
+            prs::printTab("BAO neighborhood: angle shift (multi, inclusive)");
+            for (int s : steps) prs::printTabPlusOne("step", s);
+            neigh = new emili::imrt::AngleMultiShiftNeighborhood(*prob, steps);
+        }
         prs::decrementTabLevel();
         return neigh;
     }
-#endif
 
     emili::imrt::ImrtProblem* prob = castProblem();
 
@@ -262,7 +289,6 @@ emili::Perturbation* ImrtBuilder::buildPerturbation()
     prs::incrementTabLevel();
     emili::Perturbation* pert = nullptr;
 
-#ifdef WITH_OSQP
     if (isBaoProblem()) {
         emili::imrt::BaoProblem* prob = castBaoProblem();
         if (tm.checkToken(PERT_ANGSWAP)) {
@@ -277,10 +303,23 @@ emili::Perturbation* ImrtBuilder::buildPerturbation()
             prs::printTabPlusOne("D (destroy/rebuild)", D);
             pert = new emili::imrt::GreedyAnglesPerturbation(*prob, D);
         }
+        else if (tm.checkToken(PERT_ANGSHIFT)) {
+            // Sintaxis: prangshift <step> <numSteps>
+            // Perturbación descrita por Leslie: desplaza numSteps ángulos
+            // activos DISTINTOS (no numSteps sorteos con reposición, que
+            // pueden repetir el mismo slot y terminar moviendo un solo
+            // ángulo), cada uno una magnitud aleatoria en (step, 2*step) —
+            // ver AngleShiftMultiPerturbation.
+            int step      = tm.getInteger();
+            int numSteps  = tm.getInteger();
+            prs::printTab("BAO perturbation: multi angle shift (distinct slots)");
+            prs::printTabPlusOne("step", step);
+            prs::printTabPlusOne("numSteps", numSteps);
+            pert = new emili::imrt::AngleShiftMultiPerturbation(*prob, step, numSteps);
+        }
         prs::decrementTabLevel();
         return pert;
     }
-#endif
 
     emili::imrt::ImrtProblem* prob = castProblem();
 
@@ -309,6 +348,17 @@ emili::Acceptance* ImrtBuilder::buildAcceptance()
     if (tm.checkToken(ACC_IMPROVE)) {
         prs::printTab("acceptance: improve");
         acc = new emili::imrt::ImrtImproveAccept();
+    }
+    else if (isBaoProblem() && tm.checkToken(ACC_BAO_IMPROVE)) {
+        // Sintaxis: baoimprove [rejectrepeated]
+        // Igual regla "improve" de siempre, pero consciente del conjunto de
+        // ángulos activos (BaoSolution). rejectrepeated es opcional: si está
+        // presente, rechaza un candidato que mejore pero repita un conjunto
+        // de ángulos ya visitado en la corrida — ver BaoImproveAccept.
+        bool reject_repeated = tm.checkToken(ACC_REJECT_REPEATED);
+        prs::printTab("BAO acceptance: improve");
+        prs::printTabPlusOne("reject repeated solutions", reject_repeated ? "true" : "false");
+        acc = new emili::imrt::BaoImproveAccept(reject_repeated);
     }
 
     prs::decrementTabLevel();
@@ -357,7 +407,6 @@ emili::TabuMemory* ImrtBuilder::buildTabuTenure()
         prs::printTabPlusOne("tenure", tenure);
         mem = new emili::imrt::ImrtTabuMemory(tenure);
     }
-#ifdef WITH_OSQP
     else if (tm.checkToken(TABU_BAO_FIXED)) {
         int tenure = tm.getInteger();
         prs::printTab("BAO tabu memory: fixed tenure on angle sets");
@@ -372,7 +421,6 @@ emili::TabuMemory* ImrtBuilder::buildTabuTenure()
         prs::printTabPlusOne("tenure_max", tmax);
         mem = new emili::imrt::AdaptiveBaoTabuMemory(tmin, tmax);
     }
-#endif
 
     prs::decrementTabLevel();
     return mem;
@@ -387,7 +435,6 @@ emili::Shake* ImrtBuilder::buildShake()
     prs::incrementTabLevel();
     emili::Shake* sh = nullptr;
 
-#ifdef WITH_OSQP
     if (isBaoProblem()) {
         emili::imrt::BaoProblem* prob = castBaoProblem();
         if (tm.checkToken(SHAKE_BANGSHAKE)) {
@@ -399,7 +446,6 @@ emili::Shake* ImrtBuilder::buildShake()
         prs::decrementTabLevel();
         return sh;
     }
-#endif
 
     prs::decrementTabLevel();
     return sh;

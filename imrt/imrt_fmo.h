@@ -1,13 +1,13 @@
 #ifndef IMRT_FMO_H
 #define IMRT_FMO_H
 
-#ifdef WITH_OSQP
-
-#include "imrt_instance.h"
+#include "imrt_fmo_source.h"
 #include <vector>
 #include <utility>
+#include <memory>
+#include <string>
 
-#include <osqp.h>
+namespace ampl { class AMPL; }
 
 namespace emili {
 namespace imrt {
@@ -15,9 +15,9 @@ namespace imrt {
 /**
  * ImrtFmoSolver
  *
- * Solves the continuous quadratic FMO sub-problem exactly using OSQP.
- *
- * QP formulation  (z = [x_active; u_ptv; v_oar]):
+ * Solves the FMO QP for a set of active angles via AMPL + Gurobi, reading
+ * the shared model at ampl_gurobi/fmo.mod (kept as the single source of
+ * truth for the objective/constraints instead of duplicating it here):
  *
  *   min   w_under * ||u||^2  +  w_over * ||v||^2  [+  w_ptv_over * ||w||^2]
  *   s.t.  D_ptv * x + u  >=  Dmin          (PTV underdose slack)
@@ -27,52 +27,80 @@ namespace imrt {
  *         0  <=  x_j  <=  M
  *
  * The QP is built at each solve() call using only the K active angles'
- * beamlets (K × per_angle variables instead of n_candidates × per_angle).
- * This keeps the problem size O(K) regardless of how many candidate angles
- * are in the instance, enabling large candidate pools with no extra cost.
+ * beamlets (K x per_angle variables instead of n_candidates x per_angle).
  *
- * Constructor pre-computes the per-beamlet dose index so that solve() can
- * assemble the compact CSC matrices quickly.
+ * Depends on IFmoDataSource rather than a concrete instance format, so this
+ * solver stays agnostic to on-disk layout details such as CerrFmoSource's
+ * variable beamlet count per angle.
+ *
+ * Keeps a persistent ampl::AMPL member (environment + model read once in
+ * the constructor) since BAO calls solve() potentially thousands of times;
+ * only the per-solve data (active dimlets, sparse dose sets) is refreshed.
  */
+/**
+ * Resultado de un solve(): intensidades + objetivo agregado + el desglose
+ * por órgano que el objetivo agregado esconde (u_b/v_b, ver fmo.mod). Cada
+ * entrada de ptv_underdose_sq/oar_overdose_sq es sum(u_b^2) / sum(v_b^2)
+ * sobre los boxets de ESE órgano — mismas unidades y mismo orden que
+ * ptvOrganNames()/oarOrganNames(), así que zip(nombre, valor) da el
+ * desglose completo sin ambigüedad.
+ */
+struct FmoResult {
+    std::vector<double> intensities;
+    double objective;
+    std::vector<double> ptv_underdose_sq;  // por órgano PTV, mismo orden que ptvOrganNames()
+    std::vector<double> oar_overdose_sq;   // por órgano OAR, mismo orden que oarOrganNames()
+};
+
 class ImrtFmoSolver {
 public:
-    explicit ImrtFmoSolver(const ImrtInstance& inst);
-    ~ImrtFmoSolver() = default;
+    explicit ImrtFmoSolver(const IFmoDataSource& source);
+    ~ImrtFmoSolver();
 
-    // Solve FMO for the given active angle indices (0-based into inst.angles).
-    // Returns { x (length inst.n_dimlets, zero for inactive), objective f* }.
-    std::pair<std::vector<double>, double>
-    solve(const std::vector<int>& active_angles);
+    // Solve FMO for the given active angle indices (0-based, into the BAO
+    // angle catalog -- same indexing convention the data source expects).
+    FmoResult solve(const std::vector<int>& active_angles);
 
-    int nBeamlets() const { return inst_.n_dimlets; }
+    int nBeamlets() const { return source_.n_dimlets(); }
     bool isReady()  const { return ready_; }
 
+    // Nombres de órganos en el mismo orden que los vectores de FmoResult —
+    // constantes durante toda la corrida (fijados en precompute()).
+    std::vector<std::string> ptvOrganNames() const;
+    std::vector<std::string> oarOrganNames() const;
+
+    // When on, solve() prints per-organ boxet/dose-entry counts before each
+    // real Gurobi call (skipped entirely on cache hits upstream in
+    // BaoProblem, since those never reach solve()) -- a sanity check the
+    // project's advisor asked for explicitly: confirms each solve is
+    // actually built from fresh per-configuration data, not silently
+    // reusing the same matrix across different active-angle sets.
+    void setVerbose(bool v) { verbose_ = v; }
+
 private:
-    const ImrtInstance& inst_;
+    struct OrganBounds { std::string name; int row_off; int n_boxets; };
+
+    const IFmoDataSource& source_;
     bool ready_;
+    bool verbose_ = false;
 
-    // Organ split (computed once in constructor)
-    std::vector<int> ptv_orgs_;
-    std::vector<int> oar_orgs_;
-    int n_ptv_;  // total PTV boxets
-    int n_oar_;  // total OAR boxets
-    std::vector<int> ptv_row_off_;  // per-PTV-organ offset in G4 block
-    std::vector<int> oar_row_off_;  // per-OAR-organ offset in G5 block
+    int n_ptv_, n_oar_;
+    std::vector<double> dmin_;      // per PTV boxet row, length n_ptv_
+    std::vector<double> dmax_;      // per OAR boxet row, length n_oar_
+    std::vector<double> dmax_ptv_;  // per PTV boxet row, length n_ptv_
+    std::vector<OrganBounds> ptv_bounds_;  // per-organ row ranges within dmin_/dmax_ptv_
+    std::vector<OrganBounds> oar_bounds_;  // per-organ row ranges within dmax_
 
-    // Per-beamlet dose index: ptv_dose_[j] = list of (G4_row, dose_rate)
-    std::vector<std::vector<std::pair<int,double>>> ptv_dose_;
-    std::vector<std::vector<std::pair<int,double>>> oar_dose_;
-
-    // PTV/OAR bounds (constant across solves)
-    std::vector<double> l_fixed_;     // lower bounds (n_ptv+n_oar rows)
-    std::vector<double> u_fixed_;     // upper bounds (n_ptv+n_oar rows)
-    std::vector<double> u_ptv_max_;   // Dmax_ptv per PTV voxel (= 1.07*Dmin)
+    std::unique_ptr<ampl::AMPL> ampl_;
 
     void precompute();
+    void initAmpl();
+    void printSolveDims(int n_active_beamlets,
+                         const std::vector<int>& ptv_nnz,
+                         const std::vector<int>& oar_nnz) const;
 };
 
 } // namespace imrt
 } // namespace emili
 
-#endif // WITH_OSQP
 #endif // IMRT_FMO_H

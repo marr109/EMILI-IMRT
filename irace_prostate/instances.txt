@@ -1,3 +1,0 @@
-/project/instances/PROSTATE_tiny_S42
-/project/instances/PROSTATE_tiny_S123
-/project/instances/PROSTATE_tiny_S999

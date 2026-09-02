@@ -104,3 +104,11 @@ Backup[ ]of[ ]*.numbers/
 *.txt
 !benchmark/*.txt
 *.mat
+
+# AMPL/Gurobi exploration
+ampl_gurobi/.venv/
+*.lic
+!ampl_gurobi/*.mod
+# raw clinical/course data dumps, not project artifacts
+archivos_profe/
+x/

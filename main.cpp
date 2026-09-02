@@ -14,10 +14,7 @@
 #include "setup.h"
 #include "imrt/imrt_builder.h"
 #include "imrt/imrt.h"
-#include "imrt/imrt_instance.h"
-#ifdef WITH_OSQP
 #include "imrt/imrt_bao.h"
-#endif
 
 int main(int argc, char *argv[])
 {
@@ -69,27 +66,13 @@ int main(int argc, char *argv[])
             std::cout << std::endl;
 
             // ── Clinical-style plan report (ICRU-83 metrics) ──────────────────
+            // reportPlan()/ImrtInstance were removed with the CORT-format loader;
+            // no data source on this branch retains what that report needed.
             emili::Problem* prob = &ls->getInitialSolution().getProblem();
-#ifdef WITH_OSQP
-            if (auto* bp = dynamic_cast<emili::imrt::BaoProblem*>(prob)) {
-                auto* bs = dynamic_cast<emili::imrt::BaoSolution*>(solution);
-                if (bs) {
-                    std::vector<int> deg(bs->active_angles_.size());
-                    for (size_t i = 0; i < deg.size(); ++i)
-                        deg[i] = bp->getInstance().angles[bs->active_angles_[i]];
-                    emili::imrt::reportPlan(bp->getInstance(), bs->intensities_,
-                                            solval, deg, std::cout, "dvh.csv");
-                }
-            } else
-#endif
-            if (auto* ip = dynamic_cast<emili::imrt::ImrtProblem*>(prob)) {
-                auto* is = dynamic_cast<emili::imrt::ImrtSolution*>(solution);
-                if (is) {
-                    const auto& angs = ip->getInstance().angles;
-                    std::vector<int> deg(angs.begin(), angs.end());
-                    emili::imrt::reportPlan(ip->getInstance(), is->getIntensities(),
-                                            solval, deg, std::cout, "dvh.csv");
-                }
+            if (dynamic_cast<emili::imrt::BaoProblem*>(prob) ||
+                dynamic_cast<emili::imrt::ImrtProblem*>(prob)) {
+                std::cout << "[report] Clinical DVH report unavailable "
+                             "(reportPlan/ImrtInstance removed) — objective/angles only.\n";
             }
         }
         delete ls;

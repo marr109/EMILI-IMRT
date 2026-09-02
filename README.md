@@ -11,7 +11,7 @@
   </pre>
 </p>
 
-**EMILI** (*Easily Modifiable Iterated Local search Implementation*) is an extensible C++ metaheuristic framework for combinatorial optimization, extended here with an **IMRT treatment planning module** that solves the coupled **Beam Angle Optimization (BAO)** and **Fluence Map Optimization (FMO)** problem using OSQP and iterated local search.
+**EMILI** (*Easily Modifiable Iterated Local search Implementation*) is an extensible C++ metaheuristic framework for combinatorial optimization, extended here with an **IMRT treatment planning module** that solves the coupled **Beam Angle Optimization (BAO)** and **Fluence Map Optimization (FMO)** problem using AMPL + Gurobi and iterated local search.
 
 ---
 
@@ -46,7 +46,7 @@ The codebase follows a **framework + extension** pattern. The core EMILI library
 │  CLI grammar → algorithm composition at runtime  │
 ├──────────────────────────────────────────────────┤
 │  IMRT MODULE  (imrt/)                            │
-│  ImrtInstance · ImrtProblem · ImrtFmoSolver      │
+│  CerrFmoSource · ImrtProblem · ImrtFmoSolver     │
 │  BaoProblem · AngleSwapNeighborhood              │
 │  RandomAnglesPerturbation · GreedyAngles...      │
 └──────────────────────────────────────────────────┘
@@ -77,7 +77,7 @@ Intensity-Modulated Radiation Therapy delivers conformal dose to a Planning Targ
 
 ### Quadratic penalty objective (FMO)
 
-The FMO sub-problem is solved **exactly** via OSQP:
+The FMO sub-problem is solved **exactly** via AMPL + Gurobi:
 
 ```
 min  w_under · Σ || u_b ||²  +  w_over · Σ || v_b ||²  +  w_ptv_over · Σ || w_b ||²
@@ -96,7 +96,7 @@ s.t. D_ptv·x + u ≥ Dmin            (PTV underdose slack)
 
 ### Sparse dose matrix
 
-Dose deposition data is stored in the **CORT format** — one VOIList per organ plus per-angle Dij files (`Gantry{g}_Couch{c}_D.txt`) with global voxel indices. The FMO solver assembles a **compact QP** using only the *K* active angles' beamlets, keeping the problem size O(K) regardless of candidate pool size.
+Dose deposition data is read from the raw **CERR export layout** (`instances/CERR_Prostate`) via `CerrFmoSource` — one voxel list per organ plus per-angle dose files, with beamlet counts read per angle instead of assumed uniform. The FMO solver assembles a **compact QP** using only the *K* active angles' beamlets, keeping the problem size O(K) regardless of candidate pool size.
 
 ---
 
@@ -106,15 +106,21 @@ Dose deposition data is stored in the **CORT format** — one VOIList per organ 
 
 - C++11 compiler (gcc ≥ 4.7 or Clang)
 - CMake ≥ 2.8
-- [OSQP](https://osqp.org/) (`brew install osqp` on macOS)
+- AMPL + Gurobi, installed locally via `ampl_gurobi/.venv` (see `ampl_gurobi/` for setup — the AMPL C++ API itself is vendored under `third_party/ampl_cppapi/`, no separate install needed for that part)
 
 ### Build
 
 ```bash
 mkdir build && cd build
-cmake .. -DWITH_OSQP=ON
+cmake ..
 make -j$(nproc)
 ```
+
+The FMO solver (`imrt/imrt_fmo.cpp`) resolves the AMPL binary and Gurobi
+driver at runtime via `EMILI_AMPL_BIN_DIR`/`EMILI_GUROBI_BIN` (defaulting to
+the paths inside `ampl_gurobi/.venv`) — if that venv isn't set up, `baoimrt`
+and `imrt` will still build and run, but every FMO solve will fail loudly
+and return a worst-case objective instead of a real result.
 
 The binary is `build/emili`.
 
@@ -289,9 +295,10 @@ emili_imrt/
 ├── CMakeLists.txt             # Build system
 │
 ├── imrt/                      # IMRT extension module
-│   ├── imrt_instance.h/.cpp   # Sparse dose matrix, CORT format loader
+│   ├── cerr_instance.h/.cpp   # CerrFmoSource: raw CERR export loader
+│   ├── imrt_fmo_source.h/.cpp # IFmoDataSource interface shared by FMO/BAO
 │   ├── imrt.h/.cpp            # FMO: ImrtProblem, beamlet neighborhoods
-│   ├── imrt_fmo.h/.cpp        # OSQP-exact FMO solver
+│   ├── imrt_fmo.h/.cpp        # AMPL+Gurobi FMO solver
 │   ├── imrt_bao.h/.cpp        # BAO: angle neighborhoods, perturbations
 │   └── imrt_builder.h/.cpp    # CLI builder for IMRT tokens
 │
@@ -308,7 +315,6 @@ emili_imrt/
 
 | CMake flag | Default | Description |
 |---|---|---|
-| `WITH_OSQP` | OFF | Enable BAO+FMO (requires OSQP library) |
 | `DEBUG_FLAGS` | ON | Debug symbols (`-g`) |
 | `O3_FLAGS` | OFF | `-O3` optimization |
 | `IRACE_OPTIMISED_FLAGS` | OFF | irace-tuned GCC flags |
@@ -346,8 +352,8 @@ Clinical instance files (Dij matrices, VOILists) are **not tracked** in this rep
 ## License & Credits
 
 - **EMILI framework**: Federico Pagnozzi (BSD 2-Clause) — `federico.pagnozzi@ulb.ac.be`
-- **IMRT extension** (BAO+FMO, OSQP integration, irace tuning): Marco Rojas
-- **OSQP**: Bartolomeo Stellato, Goran Banjac et al. (Apache 2.0)
+- **IMRT extension** (BAO+FMO, AMPL+Gurobi integration, irace tuning): Marco Rojas
+- **AMPL / Gurobi**: AMPL Optimization Inc. / Gurobi Optimization, LLC
 
 ```
 EMILI IMRT — BAO & FMO optimization for radiation therapy planning

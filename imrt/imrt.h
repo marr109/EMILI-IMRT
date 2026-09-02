@@ -2,7 +2,8 @@
 #define IMRT_H
 
 #include "../emilibase.h"
-#include "imrt_instance.h"
+#include "imrt_fmo_source.h"
+#include <memory>
 #include <vector>
 
 namespace emili {
@@ -14,19 +15,10 @@ class ImrtSolution; // forward declaration
  *                              PROBLEM                                      *
  *---------------------------------------------------------------------------*/
 
-/**
- * ImrtProblem
- *
- * Wraps the IMRT instance and evaluates the quadratic penalty objective:
- *
- *   f(x) = w_under * Σ_{b∈PTV}  max(0, Dmin − d_b)²
- *         + w_over  * Σ_{o∈OARs} Σ_{b∈o} max(0, d_b − Dmax_o)²
- *
- * where d_b = Σ_j D[b,j] · x[j]  (computed via ImrtInstance::computeOrganDoses).
- */
 class ImrtProblem : public emili::Problem {
 protected:
-    ImrtInstance      instance_;
+    std::unique_ptr<IFmoDataSource> source_;
+    std::vector<int>  angle_degrees_;     // catalog: angle_degrees_[i] = degree of candidate angle i
     std::vector<int>  active_angle_idxs_; // empty = all angles active
     bool              verbose_fmo_;
     double            last_best_fmo_;
@@ -35,15 +27,17 @@ protected:
     void printFmoStats(const ImrtSolution& sol, double val, double delta);
 
 public:
-    explicit ImrtProblem(ImrtInstance& inst)
-        : instance_(inst), verbose_fmo_(false),
-          last_best_fmo_(1e18), improve_count_(0) {}
+    ImrtProblem(std::unique_ptr<IFmoDataSource> source, std::vector<int> angle_degrees)
+        : source_(std::move(source)), angle_degrees_(std::move(angle_degrees)),
+          verbose_fmo_(false), last_best_fmo_(1e18), improve_count_(0) {}
 
     virtual double calcObjectiveFunctionValue(emili::Solution& solution) override;
     virtual double evaluateSolution(emili::Solution& solution) override;
-    virtual int    problemSize() override { return instance_.n_dimlets; }
+    virtual int    problemSize() override { return source_->n_dimlets(); }
 
-    const ImrtInstance& getInstance() const { return instance_; }
+    const IFmoDataSource& getSource() const { return *source_; }
+    int  nAngles() const { return (int)angle_degrees_.size(); }
+    const std::vector<int>& getAngleDegrees() const { return angle_degrees_; }
 
     /** Use only the first k angles (0-based indices 0..k-1). */
     void setActiveAngles(int k);

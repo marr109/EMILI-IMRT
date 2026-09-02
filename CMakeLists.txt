@@ -4,7 +4,6 @@ aux_source_directory(. SRC_LIST)
 aux_source_directory(./imrt SRC_LIST)
 #aux_source_directory(./template SRC_LIST)
 
-option(WITH_OSQP "Enable BAO outer loop with OSQP-based FMO solver" OFF)
 option(USE_SSE "Use SSE compile path if available" OFF)
 option(USE_NEW_MAIN "Use new loading paradigm" ON)
 option(WITH_STATS "Print solution informations" ON)
@@ -100,20 +99,20 @@ endif ()
 
 add_executable(${PROJECT_NAME} ${SRC_LIST})
 
-# ── OSQP integration ──────────────────────────────────────────────────────────
-if(WITH_OSQP)
-    find_package(osqp QUIET)
-    if(osqp_FOUND)
-        message(STATUS "OSQP found — BAO/FMO solver enabled")
-        add_definitions(-DWITH_OSQP)
-        target_link_libraries(${PROJECT_NAME} osqp::osqp)
-    else()
-        message(STATUS "OSQP not found — install via 'brew install osqp' then reconfigure")
-        message(STATUS "BAO/FMO solver disabled")
-    endif()
-endif()
-
 if(WRITE_COMMIT_ID)
     add_dependencies(${PROJECT_NAME} GNUM)
     add_dependencies(CGNUM GNUM)
 endif(WRITE_COMMIT_ID)
+
+# AMPL + Gurobi FMO solver (imrt/imrt_fmo.cpp) — vendored C++ API, see
+# third_party/ampl_cppapi/. EMILI_REPO_ROOT is baked in at configure time so
+# the binary resolves ampl_gurobi/fmo.mod and the AMPL/Gurobi runtime paths
+# from an absolute repo root regardless of the working directory it is run
+# from or where the build tree lives.
+set(EMILI_AMPL_CPPAPI_DIR ${CMAKE_SOURCE_DIR}/third_party/ampl_cppapi)
+target_include_directories(${PROJECT_NAME} PRIVATE ${EMILI_AMPL_CPPAPI_DIR}/include)
+target_link_libraries(${PROJECT_NAME} PRIVATE ${EMILI_AMPL_CPPAPI_DIR}/lib/libampl.dylib)
+target_compile_definitions(${PROJECT_NAME} PRIVATE EMILI_REPO_ROOT="${CMAKE_SOURCE_DIR}")
+set_target_properties(${PROJECT_NAME} PROPERTIES
+    BUILD_RPATH "${EMILI_AMPL_CPPAPI_DIR}/lib"
+    INSTALL_RPATH "${EMILI_AMPL_CPPAPI_DIR}/lib")

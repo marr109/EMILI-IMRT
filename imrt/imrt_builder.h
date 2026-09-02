@@ -3,9 +3,7 @@
 
 #include "../generalParser.h"
 #include "imrt.h"
-#ifdef WITH_OSQP
 #include "imrt_bao.h"
-#endif
 
 namespace prs {
 namespace imrt {
@@ -16,9 +14,10 @@ namespace imrt {
  * ── FMO problem (classic metaheuristic on beamlet intensities) ─────────────
  *   Token: imrt  <instance_dir>  [nactive <K>]  [verbose]
  *
- * ── BAO problem (OSQP-exact FMO + combinatorial angle search) ─────────────
+ * ── BAO problem (combinatorial angle search + FMO solver) ─────────────────
  *   Token: baoimrt  <K>  <instance_dir>  [verbose]
- *   (requires WITH_OSQP=ON at cmake time)
+ *   NOTE: on this branch the FMO solver (imrt_fmo.cpp) is a stub that fails
+ *   at runtime — see ampl_gurobi/ for the working AMPL+Gurobi replacement.
  *
  * ── FMO initial solutions ─────────────────────────────────────────────────
  *   izero                  all intensities = 0
@@ -35,6 +34,8 @@ namespace imrt {
  *
  * ── BAO neighborhoods ─────────────────────────────────────────────────────
  *   nangswap               AngleSwapNeighborhood (swap one active ↔ inactive)
+ *   nangshift <step>       AngleShiftNeighborhood (shift active angle ±step
+ *                           positions along the degree-sorted catalog)
  *
  * ── Perturbations ─────────────────────────────────────────────────────────
  *   prandom  <k> <max>     RandomBeamletPerturbation
@@ -65,10 +66,8 @@ public:
 
 private:
     emili::imrt::ImrtProblem* castProblem();
-#ifdef WITH_OSQP
     emili::imrt::BaoProblem*  castBaoProblem();
     bool isBaoProblem();
-#endif
 };
 
 } // namespace imrt
