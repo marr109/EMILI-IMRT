@@ -86,14 +86,47 @@ caso `unrestricted` en máquinas de desarrollo con menos memoria antes de asumir
 Las estimaciones de bytes por tupla son conservadoras y no medidas; hay que
 confirmarlas con un prototipo antes de comprometerse.
 
-### Ganancia esperada
+### Ganancia medida
 
-Si el solve queda reducido a la QP sin marshalling, el tiempo por solve debería caer
-de ~9,5 s a un orden de 1-2 s. Serían entre 5x y 8x en todo el pipeline experimental.
+Actualización 2026-09-17: se instrumentó el solve por fases (`verbose`) y la
+estimación original de 5x-8x que figuraba acá **era incorrecta**. Asumía que todo
+el tiempo de AMPL era marshalling; más de la mitad es Gurobi resolviendo.
 
-No verificado. Es una estimación por proporción sobre el desglose medido, y el
-número real depende de cuánto del tiempo de AMPL es marshalling y cuánto es Gurobi
-resolviendo. Separar esas dos partes es el primer paso de cualquier prototipo.
+Desglose real, promedio sobre solves en régimen (calafate, load ~46):
+
+| Fase | Tiempo | Share |
+|---|---|---|
+| `armado` — construir las tuplas en C++ | ~1.600 ms | 14 % |
+| `envio` — transferirlas a AMPL | ~3.400 ms | 29 % |
+| `gurobi` — resolver la QP | ~6.200 ms | 52 % |
+| `lectura` — leer resultados | ~600 ms | 5 % |
+| **Total** | **~11.800 ms** | |
+
+Gurobi resuelve en 47-49 iteraciones de barrier, lo cual es sano: no hay patología
+en el solver. Probar `threads=4` contra `threads=16` no movió la aguja (5,9 s vs
+6,0 s), así que el paralelismo tampoco es el limitante.
+
+**Techo real de la mejora: 1,7x.** Eliminando `armado` + `envio` por completo, el
+solve bajaría de ~11,8 s a ~6,8 s. El 52 % de Gurobi no lo toca ninguna
+reestructuración del modelo.
+
+Traducido a presupuesto de tiempo: una corrida con `-it 60` pasaría de ~5 solves a
+~8-9 solves.
+
+### Dos niveles de mejora, con costos muy distintos
+
+**Nivel 1 — cachear las tuplas por ángulo en C++ (solo `imrt_fmo.cpp`).**
+El bucle de `armado` reconstruye las tuplas de los cuatro ángulos activos en cada
+solve, y un movimiento de vecindario cambia uno solo. Cachear el bloque de tuplas
+de cada ángulo eliminaría la mayor parte de esos 1.600 ms. Ahorro ~12 %, sin tocar
+`fmo.mod`, sin riesgo para el modelo declarativo.
+
+**Nivel 2 — dosis residente en AMPL (requiere `fmo.mod`).**
+Ataca los 3.400 ms de `envio`. Ahorro ~29 %, pero cambia el modelo que se comparte
+con el profesor y hay que resolver el problema de narrowing descrito arriba.
+
+El nivel 1 da la mitad del beneficio total a una fracción del costo y del riesgo.
+Conviene hacerlo primero y medir antes de decidir si el nivel 2 se justifica.
 
 ## Prioridad
 
