@@ -1,5 +1,5 @@
 project(emili)
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 3.5)
 aux_source_directory(. SRC_LIST)
 aux_source_directory(./imrt SRC_LIST)
 #aux_source_directory(./template SRC_LIST)
@@ -110,8 +110,26 @@ endif(WRITE_COMMIT_ID)
 # from an absolute repo root regardless of the working directory it is run
 # from or where the build tree lives.
 set(EMILI_AMPL_CPPAPI_DIR ${CMAKE_SOURCE_DIR}/third_party/ampl_cppapi)
+
+# The vendored AMPL C++ API ships one shared library per platform, both
+# extracted from the same amplpy 0.18.0 wheel so they share the headers under
+# include/. Pick by platform instead of keeping divergent build files per host.
+if(APPLE)
+    set(EMILI_AMPL_LIB libampl.dylib)
+else()
+    set(EMILI_AMPL_LIB libampl.so)
+endif()
+
+set(EMILI_AMPL_LIB_PATH ${EMILI_AMPL_CPPAPI_DIR}/lib/${EMILI_AMPL_LIB})
+if(NOT EXISTS ${EMILI_AMPL_LIB_PATH})
+    message(FATAL_ERROR
+        "AMPL C++ API library not found: ${EMILI_AMPL_LIB_PATH}. "
+        "Extract it from the amplpy wheel for this platform "
+        "(amplpy/amplpython/cppinterface/lib/amd64/) into third_party/ampl_cppapi/lib/.")
+endif()
+
 target_include_directories(${PROJECT_NAME} PRIVATE ${EMILI_AMPL_CPPAPI_DIR}/include)
-target_link_libraries(${PROJECT_NAME} PRIVATE ${EMILI_AMPL_CPPAPI_DIR}/lib/libampl.dylib)
+target_link_libraries(${PROJECT_NAME} PRIVATE ${EMILI_AMPL_LIB_PATH})
 target_compile_definitions(${PROJECT_NAME} PRIVATE EMILI_REPO_ROOT="${CMAKE_SOURCE_DIR}")
 set_target_properties(${PROJECT_NAME} PROPERTIES
     BUILD_RPATH "${EMILI_AMPL_CPPAPI_DIR}/lib"

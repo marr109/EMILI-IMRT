@@ -16,6 +16,12 @@
 *.dylib
 *.dll
 
+# Vendored AMPL C++ API: one shared library per platform, both extracted from
+# the amplpy 0.18.0 wheel. These are dependencies, not build output, so they are
+# tracked despite the *.so / *.dylib rules above.
+!third_party/ampl_cppapi/lib/libampl.so
+!third_party/ampl_cppapi/lib/libampl.dylib
+
 # Fortran module files
 *.mod
 *.smod
