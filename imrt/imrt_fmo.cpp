@@ -2,6 +2,7 @@
 
 #include <ampl/ampl.h>
 
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 
@@ -172,6 +173,12 @@ FmoResult ImrtFmoSolver::solve(const std::vector<int>& active_angles)
                 std::vector<double>(ptv_bounds_.size(), 0.0),
                 std::vector<double>(oar_bounds_.size(), 0.0)};
 
+    // Instrumentacion de fases: mide cuanto del tiempo por solve es armado de
+    // tuplas en C++, cuanto es transferirlas a AMPL, y cuanto es Gurobi. Solo se
+    // imprime bajo verbose_; el costo de los relojes es despreciable frente al solve.
+    using clk = std::chrono::steady_clock;
+    auto t_a = clk::now();
+
     std::vector<int> active = source_.activeDimletIds(active_angles);
 
     std::vector<double> active_d(active.begin(), active.end());
@@ -202,6 +209,8 @@ FmoResult ImrtFmoSolver::solve(const std::vector<int>& active_angles)
         }
     }
 
+    auto t_b = clk::now();
+
     if (verbose_)
         printSolveDims((int)active.size(), ptv_nnz, oar_nnz);
 
@@ -223,7 +232,11 @@ FmoResult ImrtFmoSolver::solve(const std::vector<int>& active_angles)
         if (!oar_tuples.empty())
             ampl_->getParameter("d_oar").setValues(oar_tuples.data(), ampl::Args(oar_vals.data()), oar_tuples.size());
 
+        auto t_c = clk::now();
+
         ampl_->solve();
+
+        auto t_d = clk::now();
 
         double f = ampl_->getObjective("fmo_objective").value();
 
@@ -258,6 +271,18 @@ FmoResult ImrtFmoSolver::solve(const std::vector<int>& active_angles)
                 acc += v * v;
             }
             oar_overdose_sq[oi] = acc;
+        }
+
+        if (verbose_) {
+            auto ms = [](clk::time_point a, clk::time_point b) {
+                return std::chrono::duration_cast<std::chrono::milliseconds>(b - a).count();
+            };
+            auto t_e = clk::now();
+            std::cout << "    [FMO fases ms] armado=" << ms(t_a, t_b)
+                      << " envio=" << ms(t_b, t_c)
+                      << " gurobi=" << ms(t_c, t_d)
+                      << " lectura=" << ms(t_d, t_e)
+                      << " total=" << ms(t_a, t_e) << "\n";
         }
 
         return {x_full, f, ptv_underdose_sq, oar_overdose_sq};
