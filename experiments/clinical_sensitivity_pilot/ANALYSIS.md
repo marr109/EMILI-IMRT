@@ -64,3 +64,4 @@ ranking se invierte).
 - No se probó sensibilidad a `w_under`/`w_over` — son decisión de diseño
   del optimizador, no prescripción médica, y se dejaron fuera de este
   piloto a propósito (ver discusión en la sesión).
+- Realizar análisis a nivel de boxplot de perturbaciones sobre estos hiperparametros de nuestra función objetivo.
