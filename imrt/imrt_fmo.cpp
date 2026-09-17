@@ -3,7 +3,6 @@
 #include <ampl/ampl.h>
 
 #include <chrono>
-#include <unordered_map>
 #include <cstdlib>
 #include <iostream>
 
@@ -13,23 +12,6 @@
 
 namespace emili {
 namespace imrt {
-
-/*---------------------------------------------------------------------------*
- * AngleTupleCache -- bloques de tuplas de dosis por angulo.
- *
- * Las entradas (boxet, dimlet) -> dosis de un angulo son constantes: dependen
- * de la geometria, no de la solucion. Se construyen una vez por angulo visitado
- * y se concatenan en cada solve.
- *---------------------------------------------------------------------------*/
-struct AngleTupleBlock {
-    std::vector<ampl::Tuple> ptv_tuples, oar_tuples;
-    std::vector<double>      ptv_vals,   oar_vals;
-    std::vector<int>         dimlets;
-};
-
-struct AngleTupleCache {
-    std::unordered_map<int, AngleTupleBlock> by_angle;
-};
 
 namespace {
 
@@ -208,9 +190,10 @@ FmoResult ImrtFmoSolver::solve(const std::vector<int>& active_angles)
     using clk = std::chrono::steady_clock;
     auto t_a = clk::now();
 
-    if (!tuple_cache_) tuple_cache_.reset(new AngleTupleCache());
+    std::vector<int> active = source_.activeDimletIds(active_angles);
 
-    std::vector<int> active;
+    std::vector<double> active_d(active.begin(), active.end());
+
     std::vector<ampl::Tuple> ptv_tuples, oar_tuples;
     std::vector<double> ptv_vals, oar_vals;
     std::vector<int> ptv_nnz(ptv_bounds_.size(), 0), oar_nnz(oar_bounds_.size(), 0);
@@ -222,51 +205,30 @@ FmoResult ImrtFmoSolver::solve(const std::vector<int>& active_angles)
         return -1;
     };
 
-    // Un bloque por angulo, construido la primera vez que ese angulo se visita y
-    // reutilizado despues. El vecindario cambia un angulo de K por movimiento, asi
-    // que a partir del segundo solve K-1 bloques salen del cache.
-    for (int a : active_angles) {
-        auto it = tuple_cache_->by_angle.find(a);
-        if (it == tuple_cache_->by_angle.end()) {
-            AngleTupleBlock blk;
-            blk.dimlets = source_.activeDimletIds(std::vector<int>{a});
-            for (int j : blk.dimlets) {
-                for (const auto& e : source_.ptvDoseFor(j)) {
-                    blk.ptv_tuples.emplace_back(ampl::Variant((double)e.first),
-                                                ampl::Variant((double)j));
-                    blk.ptv_vals.push_back(e.second);
-                }
-                for (const auto& e : source_.oarDoseFor(j)) {
-                    blk.oar_tuples.emplace_back(ampl::Variant((double)e.first),
-                                                ampl::Variant((double)j));
-                    blk.oar_vals.push_back(e.second);
-                }
-            }
-            it = tuple_cache_->by_angle.emplace(a, std::move(blk)).first;
-        }
-
-        const AngleTupleBlock& blk = it->second;
-        active.insert(active.end(), blk.dimlets.begin(), blk.dimlets.end());
-        ptv_tuples.insert(ptv_tuples.end(), blk.ptv_tuples.begin(), blk.ptv_tuples.end());
-        ptv_vals.insert(ptv_vals.end(), blk.ptv_vals.begin(), blk.ptv_vals.end());
-        oar_tuples.insert(oar_tuples.end(), blk.oar_tuples.begin(), blk.oar_tuples.end());
-        oar_vals.insert(oar_vals.end(), blk.oar_vals.begin(), blk.oar_vals.end());
-
-        // printSolveDims solo corre bajo verbose_, asi que el conteo por organo
-        // -- un escaneo lineal por entrada de dosis -- se paga solo ahi.
-        if (verbose_) {
-            for (const auto& t : blk.ptv_tuples) {
-                int oi = organOf(ptv_bounds_, (int)t[0].dbl());
+    for (int j : active) {
+        for (const auto& e : source_.ptvDoseFor(j)) {
+            ptv_tuples.emplace_back(ampl::Variant((double)e.first), ampl::Variant((double)j));
+            ptv_vals.push_back(e.second);
+            // Solo alimenta printSolveDims bajo verbose_. organOf es un escaneo
+            // lineal por entrada de dosis (~850k por solve), asi que fuera de
+            // verbose_ es trabajo que nadie lee.
+            if (verbose_) {
+                int oi = organOf(ptv_bounds_, e.first);
                 if (oi >= 0) ++ptv_nnz[oi];
             }
-            for (const auto& t : blk.oar_tuples) {
-                int oi = organOf(oar_bounds_, (int)t[0].dbl());
+        }
+        for (const auto& e : source_.oarDoseFor(j)) {
+            oar_tuples.emplace_back(ampl::Variant((double)e.first), ampl::Variant((double)j));
+            oar_vals.push_back(e.second);
+            // Solo alimenta printSolveDims bajo verbose_. organOf es un escaneo
+            // lineal por entrada de dosis (~850k por solve), asi que fuera de
+            // verbose_ es trabajo que nadie lee.
+            if (verbose_) {
+                int oi = organOf(oar_bounds_, e.first);
                 if (oi >= 0) ++oar_nnz[oi];
             }
         }
     }
-
-    std::vector<double> active_d(active.begin(), active.end());
 
     auto t_b = clk::now();
 
