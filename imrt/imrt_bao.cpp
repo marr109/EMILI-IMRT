@@ -172,10 +172,11 @@ emili::Solution* FirstKAnglesInit::generateEmptySolution()
     // el punto de partida no cae en la reja de 5° que usa el vecindario de
     // shift, el espacio alcanzable queda desfasado según la estrategia de
     // inicialización usada, y las comparaciones dejan de ser sobre el mismo
-    // espacio de búsqueda.
+    // espacio de búsqueda. Si restrict_to_5deg_grid_ es false (catálogo
+    // "unrestricted"), no se filtra: se usan todos los índices del catálogo.
     std::vector<int> degree_order;
     for (int i = 0; i < bao_.nAngles(); ++i) {
-        if (bao_.angleDegree(i) % 5 == 0) degree_order.push_back(i);
+        if (!restrict_to_5deg_grid_ || bao_.angleDegree(i) % 5 == 0) degree_order.push_back(i);
     }
     std::sort(degree_order.begin(), degree_order.end(),
         [this](int a, int b) { return bao_.angleDegree(a) < bao_.angleDegree(b); });
@@ -209,10 +210,12 @@ emili::Solution* RandomKAnglesInit::generateEmptySolution()
     // vecindario de shift avanza en pasos múltiplos de 5, la solución inicial
     // debe partir en esa misma reja, o el espacio alcanzable por shift queda
     // desfasado según el punto de partida (y las comparaciones entre corridas
-    // dejan de ser sobre el mismo espacio de búsqueda).
+    // dejan de ser sobre el mismo espacio de búsqueda). Si
+    // restrict_to_5deg_grid_ es false (catálogo "unrestricted"), no se
+    // filtra: el pool son todos los índices del catálogo.
     std::vector<int> pool;
     for (int i = 0; i < bao_.nAngles(); ++i) {
-        if (bao_.angleDegree(i) % 5 == 0) pool.push_back(i);
+        if (!restrict_to_5deg_grid_ || bao_.angleDegree(i) % 5 == 0) pool.push_back(i);
     }
     int n = (int)pool.size();
 
@@ -375,16 +378,59 @@ AngleShiftNeighborhood::begin(emili::Solution* base)
     // Guardamos la solución actual porque TODOS los vecinos de esta ronda deben
     // construirse a partir de la misma base.
     BaoSolution* bs = static_cast<BaoSolution*>(base);
+
+    // Modo circular: antes de sobreescribir base_angles_ (que todavía guarda
+    // los ángulos de la RONDA ANTERIOR en este punto) con la nueva base,
+    // comparamos ambos vectores slot a slot para encontrar cuál slot cambió
+    // por el último movimiento aceptado. Ese slot es el punto de arranque de
+    // la rotación de esta ronda. Si no hay base_angles_ previo (primera
+    // llamada) o random_order_ tiene prioridad, arranca en el slot 0 (igual
+    // que los otros modos).
+    int rotation_start = 0;
+    if (circular_order_ && !random_order_ && !base_angles_.empty()) {
+        const std::vector<int>& new_angles = bs->active_angles_;
+        for (size_t i = 0; i < base_angles_.size() && i < new_angles.size(); ++i) {
+            if (base_angles_[i] != new_angles[i]) { rotation_start = (int)i; break; }
+        }
+    }
+
     base_angles_ = bs->active_angles_;
 
     // El catálogo puede estar almacenado como 0,100,10,110,...; este lookup
     // permite que una posición represente el siguiente grado real: 0,10,20,...
     buildDegreeOrder();
 
-    // Orden de generación:
+    // Orden de generación (por defecto, random_order_ = false y
+    // circular_order_ = false):
     //   slot 0: -step, +step
     //   slot 1: -step, +step
     //   ...
+    // Con random_order_ = true, slot_order_ es una permutación aleatoria de
+    // 0..K-1 (Fisher-Yates, mismo estilo que AngleShiftMultiPerturbation::
+    // perturb) y se recorre esa en vez del orden fijo. Con circular_order_ =
+    // true (y random_order_ = false), slot_order_ es una rotación de 0..K-1
+    // que arranca en rotation_start (el slot recién modificado por la ronda
+    // anterior) en vez de reiniciar siempre en el slot 0 — la teoría es que,
+    // en un paisaje continuo (ángulos irradiando un volumen fijo), seguir
+    // explorando alrededor del mismo ángulo que acaba de mejorar es más
+    // prometedor que volver siempre al slot 0. En ambos casos solo cambia el
+    // ORDEN en que First Improvement descubre vecinos; Best Improvement
+    // evalúa el vecindario completo igual, así que no le afecta salvo en
+    // desempates.
+    int K = (int)base_angles_.size();
+    slot_order_.resize(K);
+    if (random_order_) {
+        for (int i = 0; i < K; ++i) slot_order_[i] = i;
+        for (int i = K - 1; i > 0; --i) {
+            int j = emili::generateRandomNumber() % (i + 1);
+            std::swap(slot_order_[i], slot_order_[j]);
+        }
+    } else if (circular_order_) {
+        for (int i = 0; i < K; ++i) slot_order_[i] = (rotation_start + i) % K;
+    } else {
+        for (int i = 0; i < K; ++i) slot_order_[i] = i;
+    }
+
     cur_active_idx_ = 0;
     cur_dir_        = 0;    // 0: resta; 1: suma
     first_          = true;
@@ -394,7 +440,9 @@ AngleShiftNeighborhood::begin(emili::Solution* base)
 
 void AngleShiftNeighborhood::reset()
 {
-    // Reinicia el recorrido al primer vecino — usado cuando el framework relanza la búsqueda
+    // Reinicia el recorrido al primer vecino — usado cuando el framework relanza la búsqueda.
+    // slot_order_ (fijo o aleatorio) NO se regenera aquí: se conserva de begin(),
+    // igual que base_angles_.
     cur_active_idx_ = 0;
     cur_dir_        = 0;
     first_          = true;
@@ -403,7 +451,9 @@ void AngleShiftNeighborhood::reset()
 emili::Solution* AngleShiftNeighborhood::computeStep(emili::Solution* step)
 {
     // Esta es la función usada por First Improvement y Best Improvement.
-    // Genera UN vecino determinista por llamada. No se usa aleatoriedad aquí.
+    // Genera UN vecino determinista por llamada — la única aleatoriedad de
+    // esta clase entra en begin() (sorteo de slot_order_ si random_order_),
+    // no aquí: dado un slot_order_ ya fijado, el recorrido es determinista.
     BaoSolution* bs = static_cast<BaoSolution*>(step);
 
     // step_ cuenta posiciones del catálogo ordenado por grados. En una instancia
@@ -426,9 +476,14 @@ emili::Solution* AngleShiftNeighborhood::computeStep(emili::Solution* step)
         // No quedan combinaciones (slot, dirección): termina el iterador.
         if (cur_active_idx_ >= (int)base_angles_.size()) return nullptr;
 
+        // slot_order_[cur_active_idx_] es el slot real a desplazar: identidad
+        // en modo fijo (slot == cur_active_idx_), o la permutación sorteada en
+        // begin() en modo random_order_.
+        int slot = slot_order_[cur_active_idx_];
+
         // Obtiene el ángulo que ocupa el slot actual y busca su posición dentro
         // del catálogo ordenado numéricamente.
-        int active_catalog_idx = base_angles_[cur_active_idx_];
+        int active_catalog_idx = base_angles_[slot];
         int pos     = degree_rank_[active_catalog_idx];
 
         // Aplica -step o +step con wrap-around circular. Ejemplos para step_=1:
@@ -454,7 +509,7 @@ emili::Solution* AngleShiftNeighborhood::computeStep(emili::Solution* step)
         //   base   [20,120,230,340]
         //   vecino [10,120,230,340]
         bs->active_angles_ = base_angles_;
-        bs->active_angles_[cur_active_idx_] = candidate;
+        bs->active_angles_[slot] = candidate;
 
         // evaluateSolution consulta primero la caché FMO. El solver FMO solo se
         // ejecuta si este conjunto de ángulos todavía no fue evaluado.
@@ -688,13 +743,20 @@ void AngleShiftMultiPerturbation::buildDegreeOrder()
     for (int pos = 0; pos < n_angles_; ++pos) degree_rank_[degree_order_[pos]] = pos;
 }
 
-emili::Solution* AngleShiftMultiPerturbation::perturb(emili::Solution* solution)
+// Mueve n_moves ángulos activos DISTINTOS de nb, cada uno una magnitud
+// aleatoria en (base_step, 2*base_step), reintentando ante colisión con otro
+// ángulo activo. Factorizado de AngleShiftMultiPerturbation::perturb() para
+// que AdaptiveAngleShiftPerturbation::perturb() reutilice exactamente la
+// misma mecánica de movimiento con n_moves/base_step variables en vez de
+// fijos. No evalúa la solución (responsabilidad del llamador).
+static void applyAngleShiftMultiMove(BaoSolution* nb, int n_angles,
+                                      int n_moves,
+                                      const std::vector<int>& degree_order,
+                                      const std::vector<int>& degree_rank,
+                                      int base_step)
 {
-    if ((int)degree_order_.size() != n_angles_) buildDegreeOrder();
-
-    BaoSolution* nb = static_cast<BaoSolution*>(solution->clone());
     int K = (int)nb->active_angles_.size();
-    int n_moves = std::min(numSteps_, K);   // no se puede mover más ángulos distintos que K
+    n_moves = std::min(n_moves, K);   // no se puede mover más ángulos distintos que K
 
     // Permutación de slots (Fisher-Yates): garantiza n_moves slots DISTINTOS,
     // a diferencia de n_moves sorteos independientes con reposición que
@@ -707,15 +769,16 @@ emili::Solution* AngleShiftMultiPerturbation::perturb(emili::Solution* solution)
         std::swap(slot_order[i], slot_order[j]);
     }
 
-    // Magnitud aleatoria en (step_, 2*step_): igual razón que en
-    // AngleShiftNeighborhood::random — nunca step_ exacto, para no quedar
-    // atrapado en la misma clase módulo step_ que usa la búsqueda local.
-    int base_step = ((step_ % n_angles_) + n_angles_) % n_angles_;
+    // Magnitud aleatoria en (base_step, 2*base_step): igual razón que en
+    // AngleShiftNeighborhood::random — nunca base_step exacto, para no
+    // quedar atrapado en la misma clase módulo base_step que usa la
+    // búsqueda local.
+    base_step = ((base_step % n_angles) + n_angles) % n_angles;
     if (base_step < 1) base_step = 1;
     int span = base_step - 1;
     if (span < 1) span = 1;
 
-    std::vector<bool> active_flag(n_angles_, false);
+    std::vector<bool> active_flag(n_angles, false);
     for (int a : nb->active_angles_) active_flag[a] = true;
 
     for (int m = 0; m < n_moves; ++m) {
@@ -725,14 +788,14 @@ emili::Solution* AngleShiftMultiPerturbation::perturb(emili::Solution* solution)
             int dir = emili::generateRandomNumber() % 2;
             int step_mod = (base_step > 1)
                 ? base_step + 1 + (emili::generateRandomNumber() % span)
-                : 1 + (emili::generateRandomNumber() % (n_angles_ - 1));
+                : 1 + (emili::generateRandomNumber() % (n_angles - 1));
 
             int active_catalog_idx = nb->active_angles_[ai];
-            int pos = degree_rank_[active_catalog_idx];
+            int pos = degree_rank[active_catalog_idx];
             int new_pos = (dir == 0)
-                ? (pos - step_mod + n_angles_) % n_angles_
-                : (pos + step_mod) % n_angles_;
-            int candidate = degree_order_[new_pos];
+                ? (pos - step_mod + n_angles) % n_angles
+                : (pos + step_mod) % n_angles;
+            int candidate = degree_order[new_pos];
 
             if (active_flag[candidate]) continue;   // colisión: reintenta
 
@@ -742,6 +805,17 @@ emili::Solution* AngleShiftMultiPerturbation::perturb(emili::Solution* solution)
             break;
         }
     }
+}
+
+emili::Solution* AngleShiftMultiPerturbation::perturb(emili::Solution* solution)
+{
+    if ((int)degree_order_.size() != n_angles_) buildDegreeOrder();
+
+    BaoSolution* nb = static_cast<BaoSolution*>(solution->clone());
+    int K = (int)nb->active_angles_.size();
+    int n_moves = std::min(numSteps_, K);   // no se puede mover más ángulos distintos que K
+
+    applyAngleShiftMultiMove(nb, n_angles_, n_moves, degree_order_, degree_rank_, step_);
 
     // Una sola resolución FMO al final, con los n_moves ángulos ya
     // desplazados — los estados intermedios (después del 1er, 2do... giro)
@@ -749,6 +823,56 @@ emili::Solution* AngleShiftMultiPerturbation::perturb(emili::Solution* solution)
     // resoluciones de más sin aportar al algoritmo (quedó así al principio
     // para poder auditar cada movimiento por separado; ya verificado que la
     // lógica de slots distintos funciona bien, no hace falta mantenerlo).
+    bao_.evaluateSolution(*nb);
+    return nb;
+}
+
+void AdaptiveAngleShiftPerturbation::buildDegreeOrder()
+{
+    // Idéntico a AngleShiftMultiPerturbation::buildDegreeOrder — ver ese comentario.
+    degree_order_.resize(n_angles_);
+    for (int i = 0; i < n_angles_; ++i) degree_order_[i] = i;
+    std::sort(degree_order_.begin(), degree_order_.end(),
+        [this](int a, int b) { return bao_.angleDegree(a) < bao_.angleDegree(b); });
+
+    degree_rank_.resize(n_angles_);
+    for (int pos = 0; pos < n_angles_; ++pos) degree_rank_[degree_order_[pos]] = pos;
+}
+
+emili::Solution* AdaptiveAngleShiftPerturbation::perturb(emili::Solution* solution)
+{
+    if ((int)degree_order_.size() != n_angles_) buildDegreeOrder();
+
+    // Auto-observación: compara el objetivo recibido en esta llamada contra
+    // el recibido en la llamada anterior (perturb() ya recibe la solución
+    // actual aceptada por el ILS en cada ronda -- ver
+    // emili::IteratedLocalSearch::search, "s_p = pert.perturb(s);"). No hace
+    // falta ningún hook nuevo en el framework genérico.
+    double cur_obj = solution->getSolutionValue();
+    if (cur_obj < last_objective_) {
+        // Mejora real desde la última llamada: vuelve a nivel 0 (1 ángulo).
+        level_ = 0;
+        stagnation_count_ = 0;
+    } else {
+        stagnation_count_++;
+        if (stagnation_count_ >= stagnationThreshold_) {
+            // Nivel máximo: el que hace level_+1 == maxNumSteps_.
+            int max_level = std::max(0, maxNumSteps_ - 1);
+            level_ = std::min(level_ + 1, max_level);
+            stagnation_count_ = 0;
+        }
+    }
+    last_objective_ = cur_obj;
+
+    // Nivel 0 mueve 1 ángulo; cada nivel adicional suma uno más, hasta
+    // maxNumSteps_. La magnitud (step_) se mantiene fija en todos los
+    // niveles -- solo escala la cantidad de ángulos movidos.
+    int effective_numSteps = std::min(level_ + 1, maxNumSteps_);
+
+    BaoSolution* nb = static_cast<BaoSolution*>(solution->clone());
+    applyAngleShiftMultiMove(nb, n_angles_, effective_numSteps, degree_order_,
+                              degree_rank_, step_);
+
     bao_.evaluateSolution(*nb);
     return nb;
 }

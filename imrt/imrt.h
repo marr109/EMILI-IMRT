@@ -31,6 +31,7 @@ public:
         : source_(std::move(source)), angle_degrees_(std::move(angle_degrees)),
           verbose_fmo_(false), last_best_fmo_(1e18), improve_count_(0) {}
 
+    /** f = w_under*sum(max(0,Dmin-dosis)^2) [PTV] + w_over*sum(max(0,dosis-Dmax)^2) [OAR]. */
     virtual double calcObjectiveFunctionValue(emili::Solution& solution) override;
     virtual double evaluateSolution(emili::Solution& solution) override;
     virtual int    problemSize() override { return source_->n_dimlets(); }
@@ -78,6 +79,7 @@ public:
 
     virtual std::string     getSolutionRepresentation() override;
     virtual emili::Solution* clone() override;
+    /** Solo exige x >= 0; Dmin/Dmax son penalización blanda en el objetivo, no restricción dura. */
     virtual bool             isFeasible() override;
     virtual ~ImrtSolution() {}
 };
@@ -182,6 +184,9 @@ public:
 /**
  * BeamletSwap — swaps the intensities of two dimlets.
  * Neighbourhood size: n_dimlets × (n_dimlets − 1) / 2.
+ * No es una operación neutra: cada dimlet tiene su propia columna dispersa
+ * de influencia de dosis, así que mover la misma intensidad a otro dimlet
+ * redistribuye la dosis sobre boxets distintos y cambia el objetivo.
  */
 class BeamletSwap : public ImrtNeighborhood {
 protected:
@@ -268,7 +273,9 @@ public:
 
 /**
  * ImrtTabuMemory — circular buffer of intensity vectors.
- * A solution is tabu if its intensity vector matches any entry in the buffer.
+ * Una solución es tabú si su vector de intensidades coincide exactamente
+ * (operator==, sin tolerancia de punto flotante) con alguna entrada del
+ * buffer — casi-duplicados de una perturbación no se detectan.
  */
 class ImrtTabuMemory : public emili::TabuMemory {
 protected:

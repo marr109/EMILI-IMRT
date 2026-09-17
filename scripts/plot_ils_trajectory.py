@@ -13,6 +13,13 @@ la anterior (mismo slot, cuánto cambió), esa diferencia de magnitud es
 suficiente para clasificar cada evaluación sin necesitar ninguna columna
 extra en el CSV.
 
+Cada perturbación se reporta AGRUPADA: `prangshift <mag> <numSteps>` mueve
+numSteps ángulos y el evaluador registra un eval por movimiento, pero eso es
+UNA sola perturbación. Tanto el CSV (--perturbations-csv) como el gráfico
+tratan la ráfaga completa como un único salto: s_p aceptada -> solución
+perturbada. El detalle movimiento a movimiento sigue disponible con
+--moves-csv para auditar la clasificación.
+
 CLI example:
   python scripts/plot_ils_trajectory.py \
       --csv experiments/ils/nangshift10/grid5/data/first/seed01/trajectory.csv \
@@ -139,6 +146,65 @@ def group_bursts(records):
     return records
 
 
+def collapse_bursts(records, n_angles=360):
+    """Colapsa cada rafaga a UNA sola perturbacion: el cambio completo desde
+    la solucion aceptada por el ILS (s_p, antes del primer movimiento de la
+    rafaga) hasta la solucion ya perturbada (despues del ultimo movimiento).
+
+    Una perturbacion de numSteps movimientos aparece en la trayectoria como
+    numSteps filas consecutivas porque el evaluador registra cada movimiento
+    por separado, pero conceptualmente es UN solo salto. Los slots se
+    comparan extremo contra extremo, asi que un slot movido y devuelto a su
+    valor original no cuenta como movido.
+    """
+    bursts = []
+    for r in records:
+        if bursts and bursts[-1]["rafaga"] == r["rafaga"]:
+            b = bursts[-1]
+            b["eval_despues"] = r["eval_despues"]
+            b["angles_despues"] = r["angles_despues"]
+            b["obj_despues"] = r["obj_despues"]
+            b["n_movimientos"] += 1
+        else:
+            bursts.append({
+                "rafaga": r["rafaga"],
+                "n_movimientos": 1,
+                "eval_antes": r["eval_antes"],
+                # eval_antes es donde se ACEPTÓ s_p, que puede quedar muy
+                # atrás en la ronda; el primer movimiento de la perturbación
+                # marca dónde empieza realmente la ráfaga.
+                "eval_primer_movimiento": r["eval_despues"],
+                "eval_despues": r["eval_despues"],
+                "angles_antes": r["angles_antes"],
+                "angles_despues": r["angles_despues"],
+                "obj_antes": r["obj_antes"],
+                "obj_despues": r["obj_despues"],
+            })
+
+    for b in bursts:
+        antes = [int(a) for a in b["angles_antes"].split(";")]
+        despues = [int(a) for a in b["angles_despues"].split(";")]
+        moved = [j for j in range(len(antes)) if antes[j] != despues[j]]
+        b["slots_movidos"] = ";".join(str(j) for j in moved)
+        b["n_slots_movidos"] = len(moved)
+        b["deltas_deg"] = ";".join(
+            str(circular_delta(despues[j], antes[j], n_angles)) for j in moved)
+        b["delta_deg_total"] = sum(
+            circular_delta(despues[j], antes[j], n_angles) for j in moved)
+        b["delta_obj"] = b["obj_despues"] - b["obj_antes"]
+    return bursts
+
+
+def write_csv(path, rows, fieldnames):
+    out_dir = os.path.dirname(path) or "."
+    os.makedirs(out_dir, exist_ok=True)
+    with open(path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=fieldnames)
+        w.writeheader()
+        for r in rows:
+            w.writerow(r)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -148,8 +214,12 @@ def main(argv=None):
     p.add_argument("--output", required=True)
     p.add_argument("--title", default=None)
     p.add_argument("--perturbations-csv", default=None,
-                    help="Si se pasa, escribe el detalle antes/después de cada "
-                         "perturbación detectada (para auditar la clasificación).")
+                    help="Si se pasa, escribe UNA fila por perturbación completa: "
+                         "la ráfaga de movimientos colapsada al cambio total "
+                         "(s_p aceptada -> solución perturbada).")
+    p.add_argument("--moves-csv", default=None,
+                    help="Si se pasa, escribe el detalle movimiento a movimiento "
+                         "dentro de cada ráfaga (para auditar la clasificación).")
     p.add_argument("--no-reject-repeated", action="store_true",
                     help="Pasar si la corrida NO usó `baoimprove rejectrepeated` "
                          "(por defecto se asume que sí, que es lo que usan las "
@@ -164,33 +234,44 @@ def main(argv=None):
     records = group_bursts(detect_perturbations(
         evals, objectives, angle_sets, args.step,
         reject_repeated=not args.no_reject_repeated))
-    pert_set = {r["eval_despues"] for r in records}
-    pert_objs = [o for e, o in zip(evals, objectives) if e in pert_set]
-    pert_xs = [e for e in evals if e in pert_set]
+    bursts = collapse_bursts(records)
+
+    # El punto marcado es el FINAL de cada perturbación completa: el estado
+    # ya perturbado desde el que arranca la próxima búsqueda local.
+    obj_by_eval = dict(zip(evals, objectives))
+    pert_xs = [b["eval_despues"] for b in bursts]
+    pert_objs = [obj_by_eval[e] for e in pert_xs]
 
     if args.perturbations_csv:
-        out_dir = os.path.dirname(args.perturbations_csv) or "."
-        os.makedirs(out_dir, exist_ok=True)
-        fieldnames = ["rafaga", "paso_en_rafaga", "eval_antes", "eval_despues",
-                      "angles_antes", "angles_despues", "slots_distintos",
-                      "slot_movido", "delta_deg", "obj_antes", "obj_despues"]
-        with open(args.perturbations_csv, "w", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=fieldnames)
-            w.writeheader()
-            for r in records:
-                w.writerow(r)
-        print("perturbations CSV written: {0} ({1} filas)".format(
-            args.perturbations_csv, len(records)))
+        write_csv(args.perturbations_csv, bursts,
+                  ["rafaga", "n_movimientos", "eval_antes",
+                   "eval_primer_movimiento", "eval_despues",
+                   "angles_antes", "angles_despues", "n_slots_movidos",
+                   "slots_movidos", "deltas_deg", "delta_deg_total",
+                   "obj_antes", "obj_despues", "delta_obj"])
+        print("perturbations CSV written: {0} ({1} perturbaciones completas)".format(
+            args.perturbations_csv, len(bursts)))
+
+    if args.moves_csv:
+        write_csv(args.moves_csv, records,
+                  ["rafaga", "paso_en_rafaga", "eval_antes", "eval_despues",
+                   "angles_antes", "angles_despues", "slots_distintos",
+                   "slot_movido", "delta_deg", "obj_antes", "obj_despues"])
+        print("moves CSV written: {0} ({1} movimientos)".format(
+            args.moves_csv, len(records)))
 
     fig, ax = plt.subplots(figsize=(12, 6))
     ax.plot(evals, objectives, color="#9aa5b1", linewidth=0.7, alpha=0.5, label="evaluado")
     ax.step(evals, best, where="post", color="#2f6f9f", linewidth=2, label="mejor hasta el momento")
 
-    for e in pert_xs:
-        ax.axvline(e, color="#d1495b", alpha=0.25, linewidth=1, zorder=1)
+    # Cada perturbación se dibuja como UNA banda (desde la solución aceptada
+    # hasta la solución ya perturbada), no como una marca por movimiento.
+    for b in bursts:
+        ax.axvspan(b["eval_primer_movimiento"] - 0.5, b["eval_despues"] + 0.5,
+                   color="#d1495b", alpha=0.35, linewidth=0, zorder=1)
     if pert_xs:
         ax.scatter(pert_xs, pert_objs, color="#d1495b", s=28, zorder=3,
-                   label="perturbación ({0})".format(len(pert_xs)))
+                   label="perturbación completa ({0})".format(len(bursts)))
 
     ax.set_xlabel("evaluación")
     ax.set_ylabel("FMO objective")
@@ -203,8 +284,9 @@ def main(argv=None):
     os.makedirs(out_dir, exist_ok=True)
     fig.savefig(args.output, dpi=150)
     plt.close(fig)
-    print("ILS trajectory plot written: {0} ({1} perturbaciones detectadas de {2} evals)".format(
-        args.output, len(pert_xs), len(evals)))
+    print("ILS trajectory plot written: {0} ({1} perturbaciones completas, "
+          "{2} movimientos, de {3} evals)".format(
+              args.output, len(bursts), len(records), len(evals)))
 
 
 if __name__ == "__main__":

@@ -14,19 +14,24 @@
 #define INIT_RANDOM     "irandom"
 #define INIT_FIRSTK     "ifirstk"
 #define INIT_RANDOMK    "irandomk"
+#define INIT_K_UNRESTRICTED "unrestricted"
 #define NEIGH_SHIFT     "nshift"
 #define NEIGH_SWAP      "nswap"
 #define NEIGH_ANGSWAP   "nangswap"
 #define NEIGH_ANGSHIFT  "nangshift"
 #define NEIGH_ANGSHIFT_MULTI "nangshiftmulti"
+#define NEIGH_ANGSHIFT_RANDORDER "randorder"
+#define NEIGH_ANGSHIFT_CIRCULARORDER "circular"
 #define PERT_RANDOM     "prandom"
 #define PERT_ANGSWAP    "prangswap"
 #define PERT_ANGSHIFT   "prangshift"
+#define PERT_ANGSHIFT_ADAPTIVE "prangshiftadaptive"
 #define ACC_IMPROVE     "aimprove"
 #define ACC_BAO_IMPROVE "baoimprove"
 #define ACC_REJECT_REPEATED "rejectrepeated"
 #define TERM_MAXITER    "tmaxiter"
 #define TERM_FEASIBLE   "tfeasible"
+#define TERM_TIME       "ttime"
 #define TABU_ALL_SOL    "Tabu_all_solution"
 #define TABU_1_CAR      "Tabu_1_car"
 #define TABU_1_POS      "Tabu_1_position"
@@ -192,12 +197,22 @@ emili::InitialSolution* ImrtBuilder::buildInitialSolution()
     if (isBaoProblem()) {
         emili::imrt::BaoProblem* prob = castBaoProblem();
         if (tm.checkToken(INIT_FIRSTK)) {
+            // Token opcional final "unrestricted": desactiva el filtro a
+            // múltiplos de 5° y usa el catálogo completo de ángulos. Sin
+            // este token, comportamiento idéntico al histórico: catálogo
+            // restringido a la reja de 5° — ningún script existente cambia
+            // de resultado.
+            bool unrestricted = tm.checkToken(INIT_K_UNRESTRICTED);
             prs::printTab("BAO initial solution: first K angles");
-            init = new emili::imrt::FirstKAnglesInit(*prob);
+            prs::printTabPlusOne("catalog", unrestricted ? "unrestricted (full 360)" : "restricted (mod 5)");
+            init = new emili::imrt::FirstKAnglesInit(*prob, !unrestricted);
         }
         else if (tm.checkToken(INIT_RANDOMK)) {
+            // Ver comentario en INIT_FIRSTK: mismo token, mismo significado.
+            bool unrestricted = tm.checkToken(INIT_K_UNRESTRICTED);
             prs::printTab("BAO initial solution: random K angles");
-            init = new emili::imrt::RandomKAnglesInit(*prob);
+            prs::printTabPlusOne("catalog", unrestricted ? "unrestricted (full 360)" : "restricted (mod 5)");
+            init = new emili::imrt::RandomKAnglesInit(*prob, !unrestricted);
         }
         prs::decrementTabLevel();
         return init;
@@ -243,9 +258,20 @@ emili::Neighborhood* ImrtBuilder::buildNeighborhood()
         }
         else if (tm.checkToken(NEIGH_ANGSHIFT)) {
             int step = tm.getInteger();
+            // Token opcional final "randorder": habilita el orden de slots
+            // aleatorio (Fisher-Yates en begin(), ver AngleShiftNeighborhood).
+            // Token opcional final alternativo "circular": arranca el recorrido
+            // de slots en el slot recién modificado por la ronda anterior y
+            // rota circularmente desde ahí (ver AngleShiftNeighborhood::begin()).
+            // Sin ninguno de estos tokens, comportamiento idéntico al histórico:
+            // orden fijo 0..K-1 — ningún script existente cambia de resultado.
+            bool random_order = tm.checkToken(NEIGH_ANGSHIFT_RANDORDER);
+            bool circular_order = tm.checkToken(NEIGH_ANGSHIFT_CIRCULARORDER);
             prs::printTab("BAO neighborhood: angle shift");
             prs::printTabPlusOne("step", step);
-            neigh = new emili::imrt::AngleShiftNeighborhood(*prob, step);
+            prs::printTabPlusOne("slot order",
+                random_order ? "random" : (circular_order ? "circular" : "fixed"));
+            neigh = new emili::imrt::AngleShiftNeighborhood(*prob, step, random_order, circular_order);
         }
         else if (tm.checkToken(NEIGH_ANGSHIFT_MULTI)) {
             // Sintaxis: nangshiftmulti <n_steps> <step_1> ... <step_n>
@@ -317,6 +343,25 @@ emili::Perturbation* ImrtBuilder::buildPerturbation()
             prs::printTabPlusOne("numSteps", numSteps);
             pert = new emili::imrt::AngleShiftMultiPerturbation(*prob, step, numSteps);
         }
+        else if (tm.checkToken(PERT_ANGSHIFT_ADAPTIVE)) {
+            // Sintaxis: prangshiftadaptive <step> <maxNumSteps> <stagnationThreshold>
+            // Misma mecánica de movimiento que AngleShiftMultiPerturbation,
+            // pero progresiva: arranca moviendo 1 ángulo (nivel 0) y sube un
+            // ángulo más por nivel cuando el objetivo no mejora entre
+            // llamadas sucesivas a perturb() durante stagnationThreshold
+            // rondas seguidas (hasta maxNumSteps); vuelve a nivel 0 apenas
+            // hay una mejora real. La magnitud (step) queda fija en todos
+            // los niveles. Ver AdaptiveAngleShiftPerturbation.
+            int step                 = tm.getInteger();
+            int maxNumSteps          = tm.getInteger();
+            int stagnationThreshold  = tm.getInteger();
+            prs::printTab("BAO perturbation: adaptive multi angle shift");
+            prs::printTabPlusOne("step", step);
+            prs::printTabPlusOne("maxNumSteps", maxNumSteps);
+            prs::printTabPlusOne("stagnationThreshold", stagnationThreshold);
+            pert = new emili::imrt::AdaptiveAngleShiftPerturbation(
+                *prob, step, maxNumSteps, stagnationThreshold);
+        }
         prs::decrementTabLevel();
         return pert;
     }
@@ -383,6 +428,16 @@ emili::Termination* ImrtBuilder::buildTermination()
     else if (tm.checkToken(TERM_FEASIBLE)) {
         prs::printTab("termination: feasible solution found");
         term = new emili::imrt::ImrtFeasibleTermination();
+    }
+    else if (tm.checkToken(TERM_TIME)) {
+        // Reutiliza emili::TimedTermination (ya existente en el framework
+        // genérico, wireada en generalParser.cpp bajo el token "time" para
+        // el resto de EMILI) -- mide segundos de reloj desde reset() hasta
+        // que terminate() detecta que se cumplió el máximo.
+        float secs = (float)tm.getDecimal();
+        prs::printTab("termination: max time");
+        prs::printTabPlusOne("max_secs", secs);
+        term = new emili::TimedTermination(secs);
     }
 
     prs::decrementTabLevel();

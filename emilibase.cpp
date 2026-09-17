@@ -1871,6 +1871,32 @@ void emili::Metropolis::reset()
     counter = 0;
 }
 
+/**
+ * Simulated Annealing
+ * Classic SA: samples exactly one random neighbor per iteration (via
+ * Neighborhood::random) and lets the Acceptance criterion (typically
+ * emili::Metropolis) decide whether to keep it as the new incumbent.
+ */
+emili::Solution* emili::SimulatedAnnealing::search(emili::Solution* initial)
+{
+    termcriterion->reset();
+    emili::Solution* incumbent = initial->clone();
+    *bestSoFar = *incumbent;
+    do {
+        emili::Solution* candidate = neighbh->random(incumbent);
+        emili::Solution* chosen = acceptance->accept(incumbent, candidate);
+        if (chosen == candidate) {
+            *incumbent = *candidate;
+        }
+        delete candidate;
+        if (incumbent->operator<(*bestSoFar)) {
+            *bestSoFar = *incumbent;
+        }
+    } while (!termcriterion->terminate(bestSoFar, incumbent));
+    delete incumbent;
+    return bestSoFar->clone();
+}
+
 /**  GVNS */
 
 emili::Solution* emili::LS_VND::search(emili::Solution *initial)

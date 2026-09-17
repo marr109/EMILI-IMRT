@@ -47,6 +47,7 @@ for mag in 15 30 45; do
       --step "$NANGSHIFT" \
       --output "${seed_dir}/ils_perturbations.png" \
       --perturbations-csv "${seed_dir}/perturbations.csv" \
+      --moves-csv "${seed_dir}/perturbation_moves.csv" \
       --title "mag${mag} seed${seed}" \
       >> "$LOG" 2>&1
 

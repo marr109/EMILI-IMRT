@@ -93,6 +93,7 @@ public:
     virtual double evaluateSolution(emili::Solution& s) override;
     virtual int    problemSize() override { return nAngles(); }
 
+    const IFmoDataSource& getSource() const { return *source_; }
     int  K()                    const { return K_; }
     int  nAngles()               const { return (int)angle_degrees_.size(); }
     int  angleDegree(int idx)    const { return angle_degrees_[idx]; }
@@ -116,9 +117,15 @@ public:
 /** Select the first K angles (indices 0, 1, …, K-1). */
 class FirstKAnglesInit : public emili::InitialSolution {
     BaoProblem& bao_;
+    // true (default): restringe el catálogo a múltiplos de 5° — comportamiento
+    // histórico post-2026-09-01, requerido por AngleShiftNeighborhood. false:
+    // catálogo completo (0..nAngles()-1), sin filtro — para reproducir las
+    // corridas "unrestricted" previas a esa fecha.
+    bool restrict_to_5deg_grid_;
 public:
-    explicit FirstKAnglesInit(BaoProblem& p)
-        : emili::InitialSolution(p), bao_(p) {}
+    explicit FirstKAnglesInit(BaoProblem& p, bool restrict_to_5deg_grid = true)
+        : emili::InitialSolution(p), bao_(p),
+          restrict_to_5deg_grid_(restrict_to_5deg_grid) {}
 
     virtual emili::Solution* generateSolution()      override;
     virtual emili::Solution* generateEmptySolution() override;
@@ -127,9 +134,12 @@ public:
 /** Select K angles uniformly at random. */
 class RandomKAnglesInit : public emili::InitialSolution {
     BaoProblem& bao_;
+    // Ver comentario en FirstKAnglesInit: mismo significado y mismo default.
+    bool restrict_to_5deg_grid_;
 public:
-    explicit RandomKAnglesInit(BaoProblem& p)
-        : emili::InitialSolution(p), bao_(p) {}
+    explicit RandomKAnglesInit(BaoProblem& p, bool restrict_to_5deg_grid = true)
+        : emili::InitialSolution(p), bao_(p),
+          restrict_to_5deg_grid_(restrict_to_5deg_grid) {}
 
     virtual emili::Solution* generateSolution()      override;
     virtual emili::Solution* generateEmptySolution() override;
@@ -178,11 +188,29 @@ public:
  * del último ángulo (mayor grado) se vuelve al primero (0°), ya que el     *
  * gantry rota en un círculo continuo de 360°.                              *
  * Tamaño (cota superior) = 2 × K.                                          *
+ *                                                                           *
+ * Orden de recorrido de slots: por defecto (random_order_ = false) fijo,   *
+ * 0, 1, ..., K-1 — sesga a First Improvement hacia el slot 0 (siempre se   *
+ * revisa primero). Si random_order_ = true, begin() sortea una permutación *
+ * de los slots (Fisher-Yates) y ese es el orden usado; el modo fijo sigue  *
+ * siendo el default para no romper corridas/scripts existentes.            *
  *---------------------------------------------------------------------------*/
 class AngleShiftNeighborhood : public emili::Neighborhood {
     BaoProblem& bao_;
     int         n_angles_;
     int         step_;
+    bool        random_order_;       // false (default): recorre slots 0..K-1 en orden fijo.
+                                      // true: begin() genera una permutación aleatoria de
+                                      // slots (Fisher-Yates, mismo estilo que
+                                      // AngleShiftMultiPerturbation::perturb) y recorre esa.
+    bool        circular_order_;     // false (default): sin efecto sobre el orden fijo/random.
+                                      // true: begin() arranca slot_order_ en el slot que cambió
+                                      // en la ronda anterior (detectado por diff contra
+                                      // base_angles_ previo) y rota circularmente desde ahí,
+                                      // en vez de reiniciar siempre en el slot 0. Si
+                                      // random_order_ y circular_order_ son ambos true,
+                                      // random_order_ tiene prioridad (ya era el modo
+                                      // establecido primero) y circular_order_ se ignora.
 
     // Permutación de índices de catálogo ordenados por grado ascendente,
     // y su lookup inverso (índice de catálogo -> posición en degree_order_)
@@ -191,7 +219,9 @@ class AngleShiftNeighborhood : public emili::Neighborhood {
 
     // Estado para la iteración
     std::vector<int> base_angles_;   // ángulos activos al llamar begin()
-    int  cur_active_idx_;            // qué ángulo activo se está desplazando
+    std::vector<int> slot_order_;    // orden de recorrido de slots: identidad (0..K-1) si
+                                      // !random_order_, o permutación aleatoria si random_order_
+    int  cur_active_idx_;            // posición actual dentro de slot_order_ (no índice crudo del slot)
     int  cur_dir_;                   // 0 = -step, 1 = +step
     bool first_;
 
@@ -201,8 +231,10 @@ class AngleShiftNeighborhood : public emili::Neighborhood {
     virtual void reverseLastMove(emili::Solution* step)           override;
 
 public:
-    explicit AngleShiftNeighborhood(BaoProblem& p, int step = 1)
-        : bao_(p), n_angles_(p.nAngles()), step_(step)
+    explicit AngleShiftNeighborhood(BaoProblem& p, int step = 1, bool random_order = false,
+                                     bool circular_order = false)
+        : bao_(p), n_angles_(p.nAngles()), step_(step), random_order_(random_order)
+        , circular_order_(circular_order)
         , cur_active_idx_(0), cur_dir_(0), first_(true)
     {}
 
@@ -283,6 +315,52 @@ public:
     AngleShiftMultiPerturbation(BaoProblem& bao, int step, int numSteps)
         : emili::Perturbation(), bao_(bao), n_angles_(bao.nAngles())
         , step_(step), numSteps_(numSteps) {}
+
+    virtual emili::Solution* perturb(emili::Solution* solution) override;
+};
+
+/*---------------------------------------------------------------------------*
+ *                 ADAPTIVE ANGLE SHIFT PERTURBATION (for ILS)               *
+ *                                                                           *
+ * Misma mecánica de movimiento que AngleShiftMultiPerturbation (permutación *
+ * sin reposición de slots, magnitud aleatoria en (step,2*step) por slot),   *
+ * pero progresiva: arranca moviendo 1 solo ángulo (nivel 0) y, si el        *
+ * objetivo recibido en una llamada a perturb() no mejora respecto al        *
+ * recibido en la llamada anterior durante stagnationThreshold llamadas      *
+ * seguidas, sube un ángulo más por nivel (hasta maxNumSteps) — mismo        *
+ * espíritu que MultiScaleAngleShake (k+1 intercambios para intensidad k),   *
+ * aplicado acá al desplazamiento en vez del swap. La magnitud del           *
+ * desplazamiento (step) se mantiene fija en todos los niveles; solo escala  *
+ * la cantidad de ángulos movidos. En cuanto una llamada trae una mejora     *
+ * real, vuelve a nivel 0 (1 ángulo). No hay ningún hook nuevo en el         *
+ * framework genérico: perturb() ya recibe la solución actual aceptada por   *
+ * el ILS en cada ronda, así que basta con comparar ese valor contra el      *
+ * guardado en la llamada anterior (mismo patrón de auto-observación ya      *
+ * usado en AngleShiftNeighborhood::begin() para el vecindario circular).    *
+ *---------------------------------------------------------------------------*/
+class AdaptiveAngleShiftPerturbation : public emili::Perturbation {
+    BaoProblem& bao_;
+    int         n_angles_;
+    int         step_;
+    int         maxNumSteps_;
+    int         stagnationThreshold_;
+
+    std::vector<int> degree_order_;
+    std::vector<int> degree_rank_;
+
+    double last_objective_;
+    int    stagnation_count_;
+    int    level_;   // numSteps efectivo = min(level_ + 1, maxNumSteps_)
+
+    void buildDegreeOrder();
+
+public:
+    AdaptiveAngleShiftPerturbation(BaoProblem& bao, int step,
+                                    int maxNumSteps, int stagnationThreshold)
+        : emili::Perturbation(), bao_(bao), n_angles_(bao.nAngles())
+        , step_(step), maxNumSteps_(maxNumSteps)
+        , stagnationThreshold_(stagnationThreshold)
+        , last_objective_(1e30), stagnation_count_(0), level_(0) {}
 
     virtual emili::Solution* perturb(emili::Solution* solution) override;
 };

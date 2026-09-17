@@ -1,243 +1,141 @@
-# EMILI IMRT — Funcionamiento completo, solución óptima y parámetros
+# EMILI IMRT — Funcionamiento general (FMO + BAO)
 
-> Documento conceptual para entender el pipeline de optimización.
+> Estado real del código en `feat/ampl-gurobi-solver`, verificado línea por
+> línea contra `imrt/*.cpp`/`.h`. Reemplaza la versión anterior de este
+> documento, que describía el dataset CORT/`PROSTATE_36ang` y el pipeline de
+> tuning con irace — ambos retirados de esta rama (ver commit `59fac02`).
 
----
+## 1. Panorama general
 
-## 1. El problema: radioterapia IMRT con BAO
+Dos subproblemas anidados sobre radioterapia IMRT, sobre la instancia
+`instances/CERR_Prostate` (ver `docs/cerr-prostate-instance-analysis.md`):
 
-### ¿Qué estamos resolviendo?
+- **FMO (Fluence Map Optimization)** — dado un conjunto fijo de K ángulos,
+  ¿qué intensidad dispara cada beamlet? Es un QP convexo, resuelto exacto
+  vía **AMPL + Gurobi** desde C++ (`imrt/imrt_fmo.cpp`, modelo compartido en
+  `ampl_gurobi/fmo.mod`).
+- **BAO (Beam Angle Optimization)** — ¿qué K ángulos elegir? Espacio
+  combinatorio (`BaoProblem`, `imrt/imrt_bao.cpp`), resuelto con
+  metaheurísticas de búsqueda local/trayectoria; cada evaluación de una
+  solución candidata dispara un solve completo del FMO.
 
-Un paciente con cáncer de próstata necesita radioterapia. La máquina (LINAC) emite radiación desde un arco de 360° alrededor del paciente. El problema tiene dos partes:
+Dataset: 360 ángulos candidatos (1°/posición), ~23971 beamlets totales, 4
+órganos (PTVHD, PTVLD, BLADDER, RECTUM). La mayoría de los experimentos usan
+K=4 ángulos activos. Los valores clínicos Dmin/Dmax son **placeholder** (ver
+§2) — no representan una prescripción real todavía.
 
-1. **FMO (Fluence Map Optimization)**: dados K ángulos fijos, ¿qué intensidad de radiación disparar desde cada beamlet para maximizar dosis al tumor (PTV) y minimizar dosis a órganos sanos (OAR: vejiga, recto)?
+## 2. Función objetivo del FMO
 
-2. **BAO (Beam Angle Optimization)**: ¿cuáles K ángulos elegir del conjunto disponible para que el FMO resultante dé el mejor plan posible?
-
-```
-                    ┌─────────────────────────┐
-                    │     BAO (ángulos)        │
-                    │  "¿desde dónde disparo?" │
-                    └───────────┬─────────────┘
-                                │ elige K=4 ángulos
-                                ▼
-                    ┌─────────────────────────┐
-                    │     FMO (intensidades)   │
-                    │  "¿con qué fuerza?"      │
-                    └───────────┬─────────────┘
-                                │ optimiza beamlets
-                                ▼
-                    ┌─────────────────────────┐
-                    │     Plan de tratamiento  │
-                    │  (dosis por voxel)       │
-                    └─────────────────────────┘
-```
-
-### Anatomía del problema
+Formulación exacta que resuelve Gurobi (`ampl_gurobi/fmo.mod`, documentada
+en `imrt/imrt_fmo.h:15-39`):
 
 ```
-Paciente → voxels (cubos de 2.5mm³):
-  ├── PTV_68 (tumor, 500 voxels)     → queremos exactamente 68 Gy
-  ├── Bladder (vejiga, 300 voxels)   → máximo 50 Gy
-  └── Rectum (recto, 1764 voxels)    → máximo 50 Gy
-
-Máquina → 36 ángulos (cada 10°):
-  ├── Elegimos K=4 para el tratamiento
-  └── Cada ángulo tiene 157 beamlets (pixeles de radiación)
+min   w_under · Σu²  +  w_over · Σv²   [+ w_ptv_over · Σw²]
+s.t.  D_ptv·x + u  >=  Dmin        (subdosis PTV)
+      D_oar·x − v  <=  Dmax        (sobredosis OAR)
+      D_ptv·x − w  <=  1.07·Dmin   (sobredosis PTV / hotspot, si w_ptv_over>0)
+      u, v, w >= 0
+      0 <= x_j <= M
 ```
 
----
+| Variable | Qué es |
+|---|---|
+| `x_j` | Intensidad del beamlet `j`, `0 <= x_j <= max_intensity` |
+| `u_b` | Slack de subdosis del boxet PTV `b` (>0 si recibe menos que Dmin) |
+| `v_b` | Slack de sobredosis del boxet OAR `b` (>0 si recibe más que Dmax) |
+| `w_b` | Slack de hotspot PTV `b` — solo activo si `w_ptv_over>0`; hoy está en 0 (desactivado), la restricción queda no-binding por diseño |
 
-## 2. La función objetivo del FMO
-
-### ¿Qué mide?
-
-El FMO resuelve: dadas las intensidades de beamlet `x_j` (para j=1..dimlets), minimizar:
-
-```
-f(x) = w_under · f_under(x)     ← penaliza subdosis en PTV
-     + w_over  · f_over(x)      ← penaliza sobredosis en OAR
-     + w_ptv_over · f_ptv(x)    ← penaliza sobredosis (hotspots) en PTV
-```
-
-### Componente por componente
-
-| Término | Qué mide | Cuándo penaliza |
-|---|---|---|
-| `f_under` | Dosis en PTV por debajo de 68 Gy | Cada voxel del tumor que recibe <68 Gy |
-| `f_over` | Dosis en OAR por encima de 50 Gy | Cada voxel de vejiga/recto que recibe >50 Gy |
-| `f_ptv` | Dosis en PTV por encima de 107% Rx (72.76 Gy) | Hotspots: demasiada radiación en el tumor |
-
-### ¿Qué significan los pesos?
+**Versión evaluada por la búsqueda local clásica** (`ImrtProblem::calcObjectiveFunctionValue`,
+`imrt/imrt.cpp:14-44`): misma fórmula en forma cerrada, para un `x` ya fijo
+(no resuelve el QP, solo penaliza violaciones):
 
 ```
-w_under ALTO (1000)  → "No me dejes ni un voxel del tumor sin tratar"
-w_under BAJO (1)     → "Acepto cierta subdosis en el tumor"
-
-w_over ALTO (10)     → "Protegé los OAR a toda costa"
-w_over BAJO (0.01)   → "Puedo tolerar bastante dosis en vejiga/recto"
-
-w_ptv_over ALTO (50) → "No quiero hotspots en el PTV"
-w_ptv_over BAJO (0.1)→ "Acepto picos de dosis en el tumor"
+f(x) = w_under · Σ max(0, Dmin − dosis)²     [PTV]
+     + w_over  · Σ max(0, dosis − Dmax)²     [OAR]
 ```
 
-### El trade-off fundamental
+**Ejemplo:** Dmin=65 Gy, un boxet PTV con dosis=60 Gy → `under=5` → aporta
+`w_under·25` a `f`.
 
-Con solo K=4 ángulos, es **físicamente imposible** cumplir todos los constraints clínicos ideales. El FMO tiene que elegir qué sacrificar:
+### Valores actuales (placeholder, `imrt/cerr_instance.cpp:42-47`)
 
-```
-Ángulo que atraviesa vejiga → buena cobertura PTV, mala protección OAR
-Ángulo que evita vejiga    → buena protección OAR, mala cobertura PTV
-```
+| Parámetro | Valor | Quién lo define en teoría |
+|---|---:|---|
+| Dmin (PTVHD, PTVLD) | 65.0 Gy | Médico (prescripción) — **placeholder, no real** |
+| Dmax (BLADDER, RECTUM) | 50.0 Gy | Médico (tolerancia OAR) — **placeholder, no real** |
+| w_under | 1.0 | Diseño del optimizador |
+| w_over | 0.5 | Diseño del optimizador |
+| w_ptv_over | 0.0 (desactivado) | Diseño del optimizador |
+| max_intensity | 15000.0 | Diseño del optimizador |
 
-Los pesos `w_under`, `w_over`, `w_ptv_over` controlan **qué sacrificamos**.
+El objetivo es muy sensible a Dmin/Dmax: ±20% lo mueve entre -97% y +170%
+(ver `experiments/clinical_sensitivity_pilot/ANALYSIS.md`) — ningún valor
+absoluto reportado hoy sirve para una conclusión clínica.
 
----
+## 3. Espacio de búsqueda y qué se reporta
 
-## 3. ¿Qué es una solución óptima?
+Con 360 ángulos y K=4: `C(360,4) ≈ 688 millones` de combinaciones — evaluar
+todas con el QP exacto es inviable, de ahí las metaheurísticas.
 
-### Representación
+Cada `trajectory.csv` reporta el objetivo agregado más el desglose por
+órgano (`ptv_PTVHD_u2, ptv_PTVLD_u2, oar_BLADDER_v2, oar_RECTUM_v2`,
+`FmoResult` en `imrt/imrt_fmo.h:48-53`). **No hay métricas DVH clínicas**
+(CI, HI, V95%, etc.) — ese reporte (`reportPlan`) se eliminó junto con
+`ImrtInstance`/CORT; el binario imprime explícitamente
+`[report] Clinical DVH report unavailable`.
 
-Una solución es un conjunto ordenado de K=4 ángulos: `[130°, 190°, 220°, 90°]`
+## 4. Generación de soluciones iniciales
 
-Cada solución tiene un valor de función objetivo `f*` (menor = mejor).
-
-### El espacio de búsqueda
-
-Con 36 ángulos disponibles y K=4: C(36,4) = **58,905 soluciones posibles**.
-
-Evaluar todas con FMO exacto tomaría ~58,905 × 30s = **20 días**. Por eso usamos metaheurísticas.
-
-### ¿Qué hace "buena" a una solución?
-
-| Métrica | Ideal | Qué mide |
-|---|---|---|
-| **f*** | Mínimo posible | Objetivo FMO (menor = mejor) |
-| **CI** | 1.0 | Conformidad: ¿la dosis se ajusta al tumor? |
-| **HI** | 0 | Homogeneidad: ¿la dosis es uniforme en el tumor? |
-| **V95%** | 100% | Cobertura: ¿qué % del tumor recibe ≥95% de la dosis? |
-| **DVH constraints** | Todos OK | ¿Cumple los límites clínicos? |
-
----
-
-## 4. Las metaheurísticas y sus parámetros
-
-### 4.1 ILS (Iterated Local Search)
-
-```
-┌──────────────────────────────────────────┐
-│ ILS = LS → perturbar → LS → perturbar → ... │
-└──────────────────────────────────────────┘
-```
-
-**Funcionamiento**:
-1. Partir de una solución inicial (K ángulos)
-2. **Búsqueda local**: probar vecinos (cambiar un ángulo por otro), quedarse con el primero que mejore (`first`) o el mejor de todos (`best`)
-3. **Perturbar**: modificar la solución para escapar de óptimos locales
-4. Repetir desde (2)
-
-**Parámetros**:
-
-| Parámetro | Qué controla | Valores |
-|---|---|---|
-| `inner_explore` | Estrategia de búsqueda local | `first` (primer vecino que mejora) vs `best` (el mejor de 128 vecinos) |
-| `inner_init` | Solución inicial | `ifirstk` (primeros K ángulos) vs `irandomk` (K aleatorios) |
-| `pert_type` | Tipo de perturbación | `prangswap` (swap aleatorio) vs `pgreedy` (destruir D y reconstruir greedy) |
-| `pert_swaps` | Intensidad de prangswap | 1-2 ángulos swapeados al azar |
-| `D` | Intensidad de pgreedy | 1-3 ángulos destruidos y reconstruidos greedy |
-| `outer_iter` | Ciclos de LS + perturbación | 1-3 |
-
-### 4.2 VNS (Variable Neighborhood Search)
-
-```
-┌──────────────────────────────────────────────────┐
-│ VNS = shake(k) → LS → ¿mejoró? → k=0 : k++       │
-└──────────────────────────────────────────────────┘
-```
-
-**Funcionamiento**:
-1. Partir de una solución inicial
-2. **Shake**: perturbar con intensidad k (k=0: 1 swap, k=1: 2 swaps, k=2: 3 swaps)
-3. **Búsqueda local**: refinar
-4. Si mejoró → volver a k=0 (vecindario chico). Si no → k++ (vecindario más grande)
-5. Repetir
-
-**Parámetros**:
-
-| Parámetro | Qué controla | Valores |
-|---|---|---|
-| `inner_explore` | Estrategia LS | `first` vs `best` |
-| `inner_init` | Solución inicial | `ifirstk` vs `irandomk` |
-| `inner_iter` | Iteraciones de LS por ronda | 1-2 |
-| `outer_iter` | Rondas externas (reinicios) | 1-3 |
-| `p_max` | Máxima intensidad de shake | 1-3 (k=0 hasta p_max-1) |
-
-### 4.3 Tabu Search
-
-```
-┌──────────────────────────────────────────────────────┐
-│ Tabu = LS + memoria: "no vuelvas a estas soluciones"  │
-└──────────────────────────────────────────────────────┘
-```
-
-**Funcionamiento**:
-1. Partir de solución inicial
-2. **Explorar vecindario**: probar todos los vecinos no prohibidos por la memoria tabu
-3. Elegir el mejor (aunque empeore)
-4. Agregar la solución a la memoria tabu (prohibida por `tenure` iteraciones)
-5. Repetir
-
-**Parámetros**:
-
-| Parámetro | Qué controla | Fixed | Adaptive |
+| Token CLI | Clase | Problema | Qué hace |
 |---|---|---|---|
-| `inner_explore` | Estrategia | `first` | `first` |
-| `inner_init` | Solución inicial | `ifirstk` / `irandomk` | `ifirstk` / `irandomk` |
-| `max_iter` | Iteraciones totales | 5-8 | 5-8 |
-| `tenure` | Cuántas iteraciones una solución está prohibida | 1-20 | — |
-| `tenure_min` | Tenure mínimo (adaptive) | — | 1-10 |
-| `tenure_max` | Tenure máximo (adaptive) | — | 5-25 |
+| `ifirstk` | `FirstKAnglesInit` | BAO | Los K ángulos de menor grado, **restringido a múltiplos de 5°** (`imrt_bao.cpp:167-192`) |
+| `irandomk` | `RandomKAnglesInit` | BAO | K ángulos al azar (Fisher-Yates parcial), mismo filtro mod-5 (`imrt_bao.cpp:204-226`) |
+| `izero` | `ZeroInitialSolution` | FMO clásico | Todos los dimlets en 0 |
+| `iuniform <x>` | `UniformInitialSolution` | FMO clásico | Todos los dimlets en intensidad fija `x` |
+| `irandom <max>` | `RandomInitialSolution` | FMO clásico | Dimlets ~ U[0, max] |
 
-**Fixed vs Adaptive**:
-- **Fixed**: tenure constante. Si tenure=7, una solución queda prohibida por 7 iteraciones.
-- **Adaptive**: tenure dinámico. Si se detecta un ciclo (re-visitar solución), tenure sube. Si no hay ciclos por 2×tenure iteraciones, tenure baja.
+El filtro mod-5 en BAO es incondicional en el código actual — no hay
+variante "sin restricción" ya armable desde CLI (motivo y consecuencias en
+[[project_leslie_localsearch_review]]).
 
----
+## 5. Generadores de vecinos
 
-## 5. El pipeline completo de optimización
+| Token | Clase | Problema | Movimiento |
+|---|---|---|---|
+| `nangswap` | `AngleSwapNeighborhood` | BAO | Cambia un ángulo activo por uno inactivo |
+| `nangshift <step>` | `AngleShiftNeighborhood` | BAO | Cada ángulo activo ±`step` grados (wraparound), determinístico |
+| `nangshiftmulti <n> <s1..sn>` | `AngleMultiShiftNeighborhood` | BAO | Vecindario "inclusivo": acumula ±sᵢ para cada step de la lista |
+| `nshift <delta>` | `SingleBeamletShift` | FMO clásico | Un dimlet ±`delta`, clamp a `[0, max_intensity]` |
+| `nswap` | `BeamletSwap` | FMO clásico | Swap de intensidades entre dos dimlets — cada dimlet tiene su propia columna dispersa de influencia de dosis, así que sí cambia el objetivo |
 
-```
-                      ┌──────────────────┐
-                      │  PROSTATE_sampled │  (36 ángulos, 5652 dimlets, 2564 voxels)
-                      └────────┬─────────┘
-                               │ subsample_instance.py
-                               ▼
-                      ┌──────────────────┐
-                      │  PROSTATE_tiny   │  (8 ángulos, 192 dimlets, 256 voxels)
-                      └────────┬─────────┘
-                               │ irace × 3
-                               ▼
-            ┌──────────────────┼──────────────────┐
-            ▼                  ▼                  ▼
-      ┌──────────┐      ┌──────────┐      ┌──────────┐
-      │ ILS #323 │      │ VNS #540 │      │ Tabu #321│
-      │ pgreedy  │      │ irandomk │      │ tenure=7 │
-      │ D=2      │      │ p_max=2  │      │ w_over=  │
-      │ w_over=  │      │ w_over=  │      │   0.04   │
-      │   0.17   │      │   0.19   │      │          │
-      └────┬─────┘      └────┬─────┘      └────┬─────┘
-           │                 │                 │
-           └─────────────────┼─────────────────┘
-                             │ validación en PROSTATE real
-                             ▼
-                      ┌──────────────────┐
-                      │  Tabla comparativa│
-                      │  + Wilcoxon test  │
-                      └──────────────────┘
-```
+## 6. Perturbaciones (para ILS y metaheurísticas de trayectoria)
 
-### ¿Por qué tunear en tiny y validar en real?
+| Token | Clase | Problema | Qué hace |
+|---|---|---|---|
+| `prangswap <p>` | `RandomAnglesPerturbation` | BAO | Reemplaza `p` ángulos activos al azar |
+| `pgreedy <D>` | `GreedyAnglesPerturbation` | BAO | Destruye `D` ángulos y reconstruye greedy (Iterated Greedy) |
+| `prangshift <step> <numSteps>` | `AngleShiftMultiPerturbation` | BAO | Desplaza `numSteps` ángulos activos DISTINTOS (sin repetir slot), magnitud aleatoria en `(step, 2·step)` — ver fix de trampa módulo-step en [[project_leslie_localsearch_review]] |
+| `prandom <k> <max>` | `RandomBeamletPerturbation` | FMO clásico | Reasigna `k` dimlets a U[0, max] |
 
-1. **Costo**: una corrida en PROSTATE real tarda 4-8 horas. irace necesita cientos de corridas.
-2. **Estructura**: los hiperparámetros (tenure, D, p_max) dependen de la estructura del algoritmo, no del tamaño de la instancia.
-3. **Validación**: el test de Wilcoxon confirma si las mejoras son reales o ruido estadístico.
+## 7. Metaheurísticas — estado real
+
+No todo lo que está *wireado* en el parser CLI fue probado en un
+experimento real. Distinguir eso es el punto de esta tabla:
+
+| Metaheurística | Estado | Sintaxis |
+|---|---|---|
+| **Búsqueda local pura** (First/Best + `locmin`) | ✅ Usada extensivamente (15 semillas × 4 condiciones) | `<first\|best> irandomk locmin nangshift <step> rnds <seed>` |
+| **ILS** | ✅ Usada extensivamente (lotes de 15 semillas, nangshift 5 y 10) | `ils <first\|best> irandomk locmin nangshift <step> tmaxiter <n> prangshift <step> <numSteps> baoimprove rejectrepeated rnds <seed>` |
+| **VNS (rVNS shake)** | ⚠️ Wireada (`MultiScaleAngleShake`, token `bangshake <p_max>`, `imrt_builder.cpp:433-448`) — **sin ningún experimento corrido todavía** | `bangshake <p_max>` |
+| **Tabu Search** | ⚠️ Wireada (`BaoTabuMemory`/`AdaptiveBaoTabuMemory`, tokens `TBao_fixed <tenure>` / `TBao_adaptive <min> <max>`, `imrt_builder.cpp:410-423`) — **sin ningún experimento corrido todavía** | `TBao_fixed <tenure>` / `TBao_adaptive <min> <max>` |
+| Simulated Annealing / Metrópolis | Infraestructura genérica de EMILI (no específica de IMRT); no se verificó en esta pasada si ya es instanciable para BAO sin trabajo extra | — |
+
+## 8. Dónde está cada cosa
+
+- Objetivo/constraints FMO: `ampl_gurobi/fmo.mod`, `imrt/imrt_fmo.h`, `imrt/imrt_fmo.cpp`
+- Reader de instancia CERR: `imrt/cerr_instance.h/.cpp`
+- Problema BAO (ángulos): `imrt/imrt_bao.h/.cpp`
+- Problema FMO clásico (beamlets): `imrt/imrt.h/.cpp`
+- Parser CLI (tokens de este documento): `imrt/imrt_builder.h/.cpp`
+- Mecánica First/Best/`locmin` con trazas reales: `docs/local-search-first-best-locmin.md`
+- Sensibilidad al placeholder clínico: `experiments/clinical_sensitivity_pilot/ANALYSIS.md`

@@ -15,6 +15,7 @@
 #include "imrt/imrt_builder.h"
 #include "imrt/imrt.h"
 #include "imrt/imrt_bao.h"
+#include "imrt/imrt_report.h"
 
 int main(int argc, char *argv[])
 {
@@ -66,13 +67,34 @@ int main(int argc, char *argv[])
             std::cout << std::endl;
 
             // ── Clinical-style plan report (ICRU-83 metrics) ──────────────────
-            // reportPlan()/ImrtInstance were removed with the CORT-format loader;
-            // no data source on this branch retains what that report needed.
+            // Re-implemented on top of IFmoDataSource (see imrt/imrt_report.h)
+            // after the old ImrtInstance-based reportPlan was removed with the
+            // CORT-format loader.
             emili::Problem* prob = &ls->getInitialSolution().getProblem();
-            if (dynamic_cast<emili::imrt::BaoProblem*>(prob) ||
-                dynamic_cast<emili::imrt::ImrtProblem*>(prob)) {
-                std::cout << "[report] Clinical DVH report unavailable "
-                             "(reportPlan/ImrtInstance removed) — objective/angles only.\n";
+            if (auto* baoProb = dynamic_cast<emili::imrt::BaoProblem*>(prob)) {
+                auto* bs = dynamic_cast<emili::imrt::BaoSolution*>(solution);
+                if (bs) {
+                    emili::imrt::reportPlan(baoProb->getSource(), bs->intensities_,
+                                             solval, bs->angle_degrees_, std::cout);
+                }
+            } else if (auto* imrtProb = dynamic_cast<emili::imrt::ImrtProblem*>(prob)) {
+                auto* is = dynamic_cast<emili::imrt::ImrtSolution*>(solution);
+                if (is) {
+                    // getActiveAngles() empty means "all angles active" (see
+                    // ImrtProblem::isAngleActive); map the active indices (or
+                    // the full catalog) to their degree values for the header.
+                    const std::vector<int>& active = imrtProb->getActiveAngles();
+                    const std::vector<int>& catalog = imrtProb->getAngleDegrees();
+                    std::vector<int> deg;
+                    if (active.empty()) {
+                        deg = catalog;
+                    } else {
+                        deg.reserve(active.size());
+                        for (int idx : active) deg.push_back(catalog[idx]);
+                    }
+                    emili::imrt::reportPlan(imrtProb->getSource(), is->getIntensities(),
+                                             solval, deg, std::cout);
+                }
             }
         }
         delete ls;

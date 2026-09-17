@@ -1682,18 +1682,15 @@ class Insertion
         virtual ~Insertion() {}
 };
 
-/**
 class SimulatedAnnealing : public emili::LocalSearch
 {
 protected:
 emili::Acceptance* acceptance;
 public:
 SimulatedAnnealing(InitialSolution* initial,Neighborhood* neigh,Termination* term,Acceptance* acc):emili::LocalSearch(*initial,*term,*neigh),acceptance(acc) { }
-virtual Solution* getBestSoFar();
 virtual Solution* search(Solution *initial);
 virtual ~SimulatedAnnealing() { delete acceptance;}
 };
-*/
 
 /**  Kind of a reflection thing...*/
 emili::LocalSearch* getAlgo();
