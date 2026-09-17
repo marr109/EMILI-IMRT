@@ -72,7 +72,7 @@ for seed in $(seq -w 1 15); do
 
   mkdir -p "$seed_dir"
 
-  if [ -f "$run_log" ] && grep -q "objective function value\|Found solution" "$run_log" 2>/dev/null; then
+  if [ -f "$run_log" ] && grep -q "Conformity Index" "$run_log" 2>/dev/null; then
     echo "[$(date '+%H:%M:%S')] SKIP seed${seed} (ya completa)" | tee -a "$LOG"
   else
     echo "[$(date '+%H:%M:%S')] RUN seed${seed} (step=${STEP} strategy=${STRATEGY} catalog=${CATALOG} budget=${BUDGET}s)" | tee -a "$LOG"
@@ -88,10 +88,11 @@ for seed in $(seq -w 1 15); do
       rnds "$seed" \
       > "$run_log" 2>&1
 
-    # El corte por presupuesto termina vía finalise()/exit(0), que no imprime
-    # "Found solution" sino el objetivo por stderr, así que se acepta cualquiera
-    # de las dos marcas como corrida completa.
-    if grep -q "objective function value\|Found solution" "$run_log" 2>/dev/null; then
+    # El corte por presupuesto termina via finalise()/exit(0), que NO imprime
+    # "Found solution": ese bloque de main() queda saltado. Lo unico que aparece
+    # en los dos caminos es el reporte clinico, emitido por atexit, asi que esa
+    # es la marca de corrida completa.
+    if grep -q "Conformity Index" "$run_log" 2>/dev/null; then
       echo "[$(date '+%H:%M:%S')] DONE seed${seed}" | tee -a "$LOG"
     else
       echo "[$(date '+%H:%M:%S')] WARNING seed${seed}: sin marca de corrida completa, revisar" | tee -a "$LOG"
