@@ -9,6 +9,8 @@
 
 namespace ampl { class AMPL; }
 
+namespace emili { namespace imrt { struct AngleTupleCache; } }
+
 namespace emili {
 namespace imrt {
 
@@ -83,6 +85,13 @@ private:
     const IFmoDataSource& source_;
     bool ready_;
     bool verbose_ = false;
+
+    // Cache de las tuplas dispersas de dosis por angulo. Un movimiento de
+    // vecindario cambia un angulo de K, asi que reconstruir las ~850k tuplas
+    // de los K angulos en cada solve rehace trabajo identico para los K-1 que
+    // no se movieron. Opaco (definido en el .cpp) para no arrastrar los
+    // headers de AMPL a quien incluya este archivo.
+    std::unique_ptr<AngleTupleCache> tuple_cache_;
 
     int n_ptv_, n_oar_;
     std::vector<double> dmin_;      // per PTV boxet row, length n_ptv_
