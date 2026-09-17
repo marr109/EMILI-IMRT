@@ -120,6 +120,17 @@ void ImrtFmoSolver::initAmpl()
     ampl::Environment env(bin_dir);
     ampl_.reset(new ampl::AMPL(env));
     ampl_->setOption("solver", gurobi_bin);
+
+    // Solver options via EMILI_GUROBI_OPTIONS, passed through to gurobi_options
+    // (e.g. "threads=8 barconvtol=1e-6 outlev=1"). Setting the shell environment
+    // variable does not reach the solver: ampl::Environment gives the AMPL child
+    // its own environment, so the option has to be set on the session.
+    std::string gurobi_opts = envOr("EMILI_GUROBI_OPTIONS", "");
+    if (!gurobi_opts.empty()) {
+        ampl_->setOption("gurobi_options", gurobi_opts);
+        std::cout << "  gurobi_options: " << gurobi_opts << "\n";
+    }
+
     ampl_->read(repoPath("ampl_gurobi/fmo.mod"));
 
     ampl_->getParameter("n_ptv").set(n_ptv_);
