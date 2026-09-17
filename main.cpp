@@ -17,6 +17,62 @@
 #include "imrt/imrt_bao.h"
 #include "imrt/imrt_report.h"
 
+
+/*---------------------------------------------------------------------------*
+ * Final plan report
+ *
+ * Registered with atexit() so it also runs when the search is cut short by the
+ * wall-clock budget (-it): emili::finalise() handles SIGALRM and calls exit(0)
+ * directly, which skips the tail of main() where this used to live. The guard
+ * makes the normal path and the atexit path idempotent -- whichever runs first
+ * emits, the other is a no-op.
+ *---------------------------------------------------------------------------*/
+static emili::LocalSearch* g_ls = nullptr;
+static bool g_report_emitted = false;
+
+static void emitPlanReport()
+{
+    if (g_report_emitted || g_ls == nullptr) return;
+    g_report_emitted = true;
+
+    emili::Solution* solution = g_ls->getBestSoFar();
+    if (solution == nullptr) return;
+    double solval = solution->getSolutionValue();
+    emili::LocalSearch* ls = g_ls;
+
+    // ── Clinical-style plan report (ICRU-83 metrics) ──────────────────
+    // Re-implemented on top of IFmoDataSource (see imrt/imrt_report.h)
+    // after the old ImrtInstance-based reportPlan was removed with the
+    // CORT-format loader.
+    emili::Problem* prob = &ls->getInitialSolution().getProblem();
+    if (auto* baoProb = dynamic_cast<emili::imrt::BaoProblem*>(prob)) {
+        auto* bs = dynamic_cast<emili::imrt::BaoSolution*>(solution);
+        if (bs) {
+            emili::imrt::reportPlan(baoProb->getSource(), bs->intensities_,
+                                     solval, bs->angle_degrees_, std::cout);
+        }
+    } else if (auto* imrtProb = dynamic_cast<emili::imrt::ImrtProblem*>(prob)) {
+        auto* is = dynamic_cast<emili::imrt::ImrtSolution*>(solution);
+        if (is) {
+            // getActiveAngles() empty means "all angles active" (see
+            // ImrtProblem::isAngleActive); map the active indices (or
+            // the full catalog) to their degree values for the header.
+            const std::vector<int>& active = imrtProb->getActiveAngles();
+            const std::vector<int>& catalog = imrtProb->getAngleDegrees();
+            std::vector<int> deg;
+            if (active.empty()) {
+                deg = catalog;
+            } else {
+                deg.reserve(active.size());
+                for (int idx : active) deg.push_back(catalog[idx]);
+            }
+            emili::imrt::reportPlan(imrtProb->getSource(), is->getIntensities(),
+                                     solval, deg, std::cout);
+        }
+    }
+
+}
+
 int main(int argc, char *argv[])
 {
     prs::emili_header();
@@ -38,6 +94,8 @@ int main(int argc, char *argv[])
     ps.addBuilder(&imrtb);
 
     ls = ps.parseParams();
+    g_ls = ls;
+    atexit(emitPlanReport);
 
     if(ls != nullptr)
     {
@@ -66,37 +124,9 @@ int main(int argc, char *argv[])
             std::cout << solution->getSolutionRepresentation() << std::endl;
             std::cout << std::endl;
 
-            // ── Clinical-style plan report (ICRU-83 metrics) ──────────────────
-            // Re-implemented on top of IFmoDataSource (see imrt/imrt_report.h)
-            // after the old ImrtInstance-based reportPlan was removed with the
-            // CORT-format loader.
-            emili::Problem* prob = &ls->getInitialSolution().getProblem();
-            if (auto* baoProb = dynamic_cast<emili::imrt::BaoProblem*>(prob)) {
-                auto* bs = dynamic_cast<emili::imrt::BaoSolution*>(solution);
-                if (bs) {
-                    emili::imrt::reportPlan(baoProb->getSource(), bs->intensities_,
-                                             solval, bs->angle_degrees_, std::cout);
-                }
-            } else if (auto* imrtProb = dynamic_cast<emili::imrt::ImrtProblem*>(prob)) {
-                auto* is = dynamic_cast<emili::imrt::ImrtSolution*>(solution);
-                if (is) {
-                    // getActiveAngles() empty means "all angles active" (see
-                    // ImrtProblem::isAngleActive); map the active indices (or
-                    // the full catalog) to their degree values for the header.
-                    const std::vector<int>& active = imrtProb->getActiveAngles();
-                    const std::vector<int>& catalog = imrtProb->getAngleDegrees();
-                    std::vector<int> deg;
-                    if (active.empty()) {
-                        deg = catalog;
-                    } else {
-                        deg.reserve(active.size());
-                        for (int idx : active) deg.push_back(catalog[idx]);
-                    }
-                    emili::imrt::reportPlan(imrtProb->getSource(), is->getIntensities(),
-                                             solval, deg, std::cout);
-                }
-            }
+            emitPlanReport();
         }
+        g_ls = nullptr;
         delete ls;
     }
 }

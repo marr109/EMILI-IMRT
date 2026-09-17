@@ -181,9 +181,9 @@ void setTerminationTimer(int time)
     termination_timer.it_value.tv_usec = 0;
     termination_timer.it_interval.tv_sec = 0;
     termination_timer.it_interval.tv_usec = 0;
-    signal(SIGPROF, timeUp);
+    signal(SIGALRM, timeUp);
     signal(SIGINT, timeUp);
-    if (setitimer (ITIMER_PROF, &termination_timer, NULL) != 0) {
+    if (setitimer (ITIMER_REAL, &termination_timer, NULL) != 0) {
         printf("error in setitimer\n");
         exit(10);
     }else{
@@ -195,7 +195,7 @@ static inline bool isTimerUp()
 {
 
       itimerval current_timer;
-       getitimer(ITIMER_PROF, &current_timer);
+       getitimer(ITIMER_REAL, &current_timer);
       return (current_timer.it_value.tv_sec != 0 ||
               current_timer.it_value.tv_usec != 0);
 
@@ -217,9 +217,9 @@ static inline void setTimer(float maxTime)
     timer.it_interval.tv_sec = 0;
     timer.it_interval.tv_usec = 0;
     emili::iteration_counter_zero();
-    signal(SIGPROF, finalise);
+    signal(SIGALRM, finalise);
     signal(SIGINT, finalise);
-    if (setitimer (ITIMER_PROF, &timer, NULL) != 0) {
+    if (setitimer (ITIMER_REAL, &timer, NULL) != 0) {
         printf("error in setitimer\n");
         exit(10);
     }else{
@@ -235,7 +235,7 @@ static inline void stopTimer()
     std::cout << "timer stopped" << std::endl;
 
     struct itimerval zero_timer = { 0 };
-   setitimer(ITIMER_PROF, &zero_timer, &timer);
+   setitimer(ITIMER_REAL, &zero_timer, &timer);
 
 }
 #else
