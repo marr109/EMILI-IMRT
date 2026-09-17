@@ -113,20 +113,49 @@ reestructuración del modelo.
 Traducido a presupuesto de tiempo: una corrida con `-it 60` pasaría de ~5 solves a
 ~8-9 solves.
 
-### Dos niveles de mejora, con costos muy distintos
+### Nivel 1 (cachear tuplas en C++): probado y descartado
 
-**Nivel 1 — cachear las tuplas por ángulo en C++ (solo `imrt_fmo.cpp`).**
-El bucle de `armado` reconstruye las tuplas de los cuatro ángulos activos en cada
-solve, y un movimiento de vecindario cambia uno solo. Cachear el bloque de tuplas
-de cada ángulo eliminaría la mayor parte de esos 1.600 ms. Ahorro ~12 %, sin tocar
-`fmo.mod`, sin riesgo para el modelo declarativo.
+Se implementó y se midió. **No sirve.**
 
-**Nivel 2 — dosis residente en AMPL (requiere `fmo.mod`).**
-Ataca los 3.400 ms de `envio`. Ahorro ~29 %, pero cambia el modelo que se comparte
-con el profesor y hay que resolver el problema de narrowing descrito arriba.
+| Intento | Ganancia medida |
+|---|---|
+| Saltear el conteo por órgano (`organOf`) fuera de `verbose` | 1,1 % |
+| Cachear los bloques de tuplas por ángulo | 0,4 % |
 
-El nivel 1 da la mitad del beneficio total a una fracción del costo y del riesgo.
-Conviene hacerlo primero y medir antes de decidir si el nivel 2 se justifica.
+Ambos dentro del ruido entre corridas. El caché era **correcto** —objetivo idéntico
+al baseline, `f=94433.73`— pero costaba ~340 MB de RSS y un pimpl más un hash map,
+a cambio de nada medible. Se revirtió.
+
+Razón del fracaso: el caché evita *construir* las ~850k `ampl::Tuple`, pero después
+tiene que *copiarlas* del bloque cacheado al vector que recibe `setValues`. `Tuple`
+posee sus `Variant`, así que copiar cuesta prácticamente lo mismo que construir.
+
+**Conclusión: `armado` + `envio` (43 % del tiempo) no son alcanzables mientras la
+API `setValues` de AMPL esté en el camino caliente.** Materializar el arreglo de
+tuplas y transferirlo es el precio de entrada de esa API, no un descuido del código.
+
+También se descartaron por medición:
+
+- **Threads de Gurobi**: `threads=4` vs `threads=16` → 5,9 s vs 6,0 s.
+- **Tolerancia de barrier**: `barconvtol` de 1e-8 a 1e-4 recorta 47 → 42 iteraciones
+  y el tiempo de fase no se mueve. Con `outlev=1` se ve por qué: barrier resuelve en
+  3,46 s, pero la fase mide ~5,2 s. Los ~1,7 s restantes son AMPL escribiendo un
+  `.nl` de 1,27M no-ceros y leyendo el `.sol` de vuelta, en cada solve.
+
+### Lo único que queda con ganancia real
+
+Llamar a la API C++ de Gurobi directamente elimina tres costos de una vez:
+`envio` (3,0 s), la interfaz de archivos `.nl`/`.sol` (1,7 s) y casi toda la
+`lectura` (0,6 s). Son ~5,3 s de ~11,5 s, o sea **~2x**, y además habilita warm
+start: solves consecutivos difieren en un ángulo y hoy el `reset data` destruye
+esa información.
+
+El costo es que `fmo.mod` deja de ser el motor. Una opción intermedia es mantenerlo
+como especificación de referencia —el documento legible que se discute— y validar
+contra él una implementación en Gurobi C++.
+
+Decisión pendiente del equipo. No es una decisión técnica: es sobre qué rol cumple
+el modelo declarativo en el proyecto.
 
 ## Prioridad
 
