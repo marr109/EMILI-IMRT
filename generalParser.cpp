@@ -33,6 +33,7 @@
 #define FEASIBLE_FIRST "ffirst"
 #define TB_FIRST "tfirst"
 #define BEST "best"
+#define ALGO_SA "sa"
 #define FEASIBLE_BEST "fbest"
 #define TB_BEST "tbest"
 #define VND "vnd"
@@ -756,6 +757,15 @@ emili::LocalSearch* prs::EmBaseBuilder::buildAlgo()
         emili::Termination* te = retrieveComponent(COMPONENT_TERMINATION_CRITERION).get<emili::Termination>();
         emili::Neighborhood* ne = retrieveComponent(COMPONENT_NEIGHBORHOOD).get<emili::Neighborhood>();
         ls =  new emili::BestImprovementSearch(*in,*te,*ne);
+    }
+    else if(tm.checkToken(ALGO_SA))
+    {
+        printTab("SIMULATED ANNEALING");
+        emili::InitialSolution* in = retrieveComponent(COMPONENT_INITIAL_SOLUTION_GENERATOR).get<emili::InitialSolution>();
+        emili::Termination* te = retrieveComponent(COMPONENT_TERMINATION_CRITERION).get<emili::Termination>();
+        emili::Neighborhood* ne = retrieveComponent(COMPONENT_NEIGHBORHOOD).get<emili::Neighborhood>();
+        emili::Acceptance* acc = retrieveComponent(COMPONENT_ACCEPTANCE).get<emili::Acceptance>();
+        ls = new emili::SimulatedAnnealing(in, ne, te, acc);
     }
     else if(tm.checkToken(FEASIBLE_FIRST))
     {
