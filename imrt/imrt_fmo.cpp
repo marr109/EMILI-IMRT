@@ -209,14 +209,24 @@ FmoResult ImrtFmoSolver::solve(const std::vector<int>& active_angles)
         for (const auto& e : source_.ptvDoseFor(j)) {
             ptv_tuples.emplace_back(ampl::Variant((double)e.first), ampl::Variant((double)j));
             ptv_vals.push_back(e.second);
-            int oi = organOf(ptv_bounds_, e.first);
-            if (oi >= 0) ++ptv_nnz[oi];
+            // Solo alimenta printSolveDims bajo verbose_. organOf es un escaneo
+            // lineal por entrada de dosis (~850k por solve), asi que fuera de
+            // verbose_ es trabajo que nadie lee.
+            if (verbose_) {
+                int oi = organOf(ptv_bounds_, e.first);
+                if (oi >= 0) ++ptv_nnz[oi];
+            }
         }
         for (const auto& e : source_.oarDoseFor(j)) {
             oar_tuples.emplace_back(ampl::Variant((double)e.first), ampl::Variant((double)j));
             oar_vals.push_back(e.second);
-            int oi = organOf(oar_bounds_, e.first);
-            if (oi >= 0) ++oar_nnz[oi];
+            // Solo alimenta printSolveDims bajo verbose_. organOf es un escaneo
+            // lineal por entrada de dosis (~850k por solve), asi que fuera de
+            // verbose_ es trabajo que nadie lee.
+            if (verbose_) {
+                int oi = organOf(oar_bounds_, e.first);
+                if (oi >= 0) ++oar_nnz[oi];
+            }
         }
     }
 
