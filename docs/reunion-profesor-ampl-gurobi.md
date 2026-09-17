@@ -151,6 +151,11 @@ Puedo recalcular el `ANALYSIS.md` y los gráficos con cualquiera de las dos
 convenciones (o ambas, una al lado de la otra) — quería confirmarlo antes de
 tocar los resultados ya presentados.
 
+### 4.d — Estructura de archivos AMPL (tu comentario sobre `.mod`/`.dat` por BAC)
+
+Ver `docs/estructura-archivos-ampl-guillermo.md` — documento aparte, listo
+para llevar a la reunión.
+
 ---
 
 ## 5. Próximos pasos propuestos (pendiente de tu visto bueno)
@@ -162,3 +167,5 @@ tocar los resultados ya presentados.
    experimento actual, una vez cerrada la metodología.
 4. Evaluar si conviene repetir con otro `step` de vecindario (5°, 30°) para
    ver si el patrón First-vs-Best se sostiene.
+5. Si en 4.d preferís el `.dat` de reproducción partido por órgano en vez
+   del archivo único actual, lo ajusto en `scripts/export_fmo_dat.cpp`.
