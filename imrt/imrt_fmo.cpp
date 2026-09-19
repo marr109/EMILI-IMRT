@@ -3,6 +3,7 @@
 #include <ampl/ampl.h>
 
 #include <chrono>
+#include <csignal>
 #include <cstdlib>
 #include <iostream>
 
@@ -177,8 +178,39 @@ std::vector<std::string> ImrtFmoSolver::oarOrganNames() const
  * solve — refresh the per-solve data (active dimlets, sparse dose sets) and
  * resolve with Gurobi.
  *---------------------------------------------------------------------------*/
+/*---------------------------------------------------------------------------*
+ * AlarmGuard — bloquea SIGALRM mientras dura el solve.
+ *
+ * El presupuesto de tiempo (-it) se entrega por SIGALRM, y su handler
+ * (emili::finalise) imprime el reporte clinico: reserva memoria y usa
+ * iostreams, nada de eso es async-signal-safe. El 95% del tiempo de reloj se
+ * va dentro de este solve, casi todo en asignaciones para las ~850k tuplas de
+ * dosis, asi que la señal caia dentro de malloc y el proceso moria a mitad de
+ * escritura en vez de emitir el reporte.
+ *
+ * Bloqueando la señal durante el solve, queda pendiente y se entrega al
+ * restaurar la mascara -- entre solves, con el heap consistente. El costo es
+ * un sobrepaso de a lo sumo un solve (~8 s sobre 1080 s: 0,7%).
+ *---------------------------------------------------------------------------*/
+namespace {
+class AlarmGuard {
+public:
+    AlarmGuard() {
+        sigset_t block;
+        sigemptyset(&block);
+        sigaddset(&block, SIGALRM);
+        sigprocmask(SIG_BLOCK, &block, &prev_);
+    }
+    ~AlarmGuard() { sigprocmask(SIG_SETMASK, &prev_, nullptr); }
+private:
+    sigset_t prev_;
+};
+}  // namespace
+
 FmoResult ImrtFmoSolver::solve(const std::vector<int>& active_angles)
 {
+    AlarmGuard guard;   // la señal solo se entrega al salir de este scope
+
     if (!ready_)
         return {std::vector<double>(source_.n_dimlets(), 0.0), 1e30,
                 std::vector<double>(ptv_bounds_.size(), 0.0),
