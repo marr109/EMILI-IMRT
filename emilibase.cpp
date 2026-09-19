@@ -1372,11 +1372,14 @@ emili::Solution* emili::IteratedLocalSearch::timedSearch(float maxTime)
         emili::Solution* s_s = nullptr;
         emili::Solution* s_p = nullptr;
         do{
+            // Un solo delete: el bloque estaba duplicado y s_p no se anulaba
+            // entre ambos, asi que la segunda condicion volvia a dar verdadera
+            // y liberaba el mismo bloque dos veces. La version no cronometrada
+            // de search() nunca tuvo esa copia.
             if(s_p != s && s_p != nullptr){
                 delete s_p;
+                s_p = nullptr;
 	        }
-            if(s_p != s && s_p != nullptr)
-                delete s_p;
             //Perturbation step
             s_p = pert.perturb(s);
             //local search on s_p
