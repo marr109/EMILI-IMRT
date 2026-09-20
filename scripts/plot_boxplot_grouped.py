@@ -31,6 +31,12 @@ import sys
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+# matplotlib renombro 'labels' -> 'tick_labels' en 3.9. calafate corre 3.3
+# (ligada a Python 3.6), asi que el nombre se elige en runtime.
+_BOXPLOT_LABEL_KW = ("tick_labels"
+                     if tuple(int(x) for x in matplotlib.__version__.split(".")[:2]) >= (3, 9)
+                     else "labels")
 from matplotlib.patches import Patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -121,7 +127,7 @@ def main(argv=None):
     fig, ax = plt.subplots(figsize=(fig_width, 6.5))
 
     bp = ax.boxplot(
-        datasets, positions=xpos, tick_labels=labels, patch_artist=True, widths=0.6,
+        datasets, positions=xpos, **{_BOXPLOT_LABEL_KW: labels}, patch_artist=True, widths=0.6,
         medianprops=dict(color="#2b2b2b", linewidth=1.6),
         whiskerprops=dict(color="#555555", linewidth=1.1),
         capprops=dict(color="#555555", linewidth=1.1),
