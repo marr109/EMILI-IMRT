@@ -4,6 +4,11 @@ set -uo pipefail
 # Uso: scripts/run_ils_budget_matrix.sh [segundos] [paralelismo]
 #   por defecto: 1080 s (18 min) y 4 corridas simultaneas
 #
+# Variables de entorno:
+#   ORDERS      ordenes de escaneo a correr: "fijo random circular" (default: fijo)
+#   STRATEGIES  estrategias: "first best" (default: ambas)
+#   SEEDS       cantidad de semillas (default: 15)
+#
 # Corre la matriz completa de ILS bajo presupuesto de TIEMPO:
 #   {restricted, unrestricted} x {nangshift 5, 10} x {First, Best} x 15 semillas
 #   = 8 condiciones, 120 corridas.
@@ -35,6 +40,14 @@ set -uo pipefail
 BUDGET="${1:-1080}"
 PAR="${2:-4}"
 SEEDS="${SEEDS:-15}"
+ORDERS="${ORDERS:-fijo}"
+STRATEGIES="${STRATEGIES:-first best}"
+
+# El orden de escaneo solo altera el resultado en First: Best recorre el
+# vecindario completo antes de moverse, asi que el orden unicamente puede
+# resolver empates. El token va pegado a nangshift <step>.
+orden_token() { case "$1" in random) echo "randorder";; circular) echo "circular";; *) echo "";; esac; }
+orden_sufijo() { case "$1" in random) echo "-rand";; circular) echo "-circ";; *) echo "";; esac; }
 
 if [ -z "${EMILI_AMPL_BIN_DIR:-}" ] || [ -z "${EMILI_GUROBI_BIN:-}" ]; then
   SP="$(echo ampl_gurobi/.venv/lib/python*/site-packages)"
@@ -51,9 +64,11 @@ mkdir -p "$(dirname "$MASTER")"
 log() { echo "[$(date '+%F %H:%M:%S')] $*" | tee -a "$MASTER"; }
 
 run_one() {
-  local step="$1" cat="$2" strat="$3" seed="$4"
+  local step="$1" cat="$2" strat="$3" seed="$4" orden="${5:-fijo}"
   local tok=""; [ "$cat" = "unrestricted" ] && tok="unrestricted"
-  local dir="experiments/ils/nangshift${step}/${cat}-budget${BUDGET}s/data/${strat}/seed${seed}"
+  local otok="$(orden_token "$orden")"
+  local osuf="$(orden_sufijo "$orden")"
+  local dir="experiments/ils/nangshift${step}/${cat}-budget${BUDGET}s${osuf}/data/${strat}/seed${seed}"
   local traj="${dir}/trajectory.csv" rlog="${dir}/run.log"
   mkdir -p "$dir"
 
@@ -65,7 +80,7 @@ run_one() {
   fi
 
   ./build/emili instances/CERR_Prostate baoimrt 4 csv "$traj" \
-    ils "$strat" irandomk $tok locmin nangshift "$step" \
+    ils "$strat" irandomk $tok locmin nangshift "$step" $otok \
     tmaxiter 1000000 \
     prangshift "$step" 3 \
     baoimprove rejectrepeated \
@@ -79,19 +94,21 @@ run_one() {
       --convergence-output "${dir}/convergence.png" \
       --iterations-output "${dir}/iterations.png" >> "$rlog" 2>&1 || true
   else
-    echo "WARNING ${step}/${cat}/${strat}/seed${seed}: sin marca de corrida completa" >> "$MASTER"
+    echo "WARNING ${step}/${cat}${osuf}/${strat}/seed${seed}: sin marca de corrida completa" >> "$MASTER"
   fi
 }
-export -f run_one
-export BUDGET PY MASTER EMILI_AMPL_BIN_DIR EMILI_GUROBI_BIN EMILI_GUROBI_OPTIONS
+export -f run_one orden_token orden_sufijo
+export BUDGET PY MASTER ORDERS STRATEGIES EMILI_AMPL_BIN_DIR EMILI_GUROBI_BIN EMILI_GUROBI_OPTIONS
 
 # --- cola de trabajos -------------------------------------------------------
 JOBS="$(mktemp)"
 for step in 5 10; do
   for cat in restricted unrestricted; do
-    for strat in first best; do
-      for seed in $(seq -w 1 "$SEEDS"); do
-        echo "$step $cat $strat $seed" >> "$JOBS"
+    for orden in $ORDERS; do
+      for strat in $STRATEGIES; do
+        for seed in $(seq -w 1 "$SEEDS"); do
+          echo "$step $cat $strat $seed $orden" >> "$JOBS"
+        done
       done
     done
   done
@@ -99,12 +116,13 @@ done
 TOTAL=$(wc -l < "$JOBS")
 
 log "MATRIZ START  presupuesto=${BUDGET}s  paralelismo=${PAR}  corridas=${TOTAL}"
+log "ordenes=[${ORDERS}]  estrategias=[${STRATEGIES}]  semillas=${SEEDS}"
 log "gurobi_options=${EMILI_GUROBI_OPTIONS}"
 log "estimado: $(( (TOTAL / PAR) * (BUDGET + 30) / 3600 )) h aprox"
 
 DONE=0
-while read -r step cat strat seed; do
-  run_one "$step" "$cat" "$strat" "$seed" &
+while read -r step cat strat seed orden; do
+  run_one "$step" "$cat" "$strat" "$seed" "$orden" &
   while [ "$(jobs -rp | wc -l)" -ge "$PAR" ]; do sleep 5; done
   DONE=$((DONE + 1))
   [ $((DONE % PAR)) -eq 0 ] && log "lanzadas ${DONE}/${TOTAL}"
