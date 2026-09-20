@@ -1,25 +1,35 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-# Uso: scripts/run_sa_budget_pilot.sh [segundos] [paralelismo] [temperatura]
-#   por defecto: 1080 s (18 min), 4 simultaneas, T = 1000
+# Uso: scripts/run_sa_budget_pilot.sh [segundos] [paralelismo] [T_inicial] [T_final]
+#   por defecto: 1080 s (18 min), 4 simultaneas, T de 1300 a 80
 #
 # MUESTRA PILOTO de recocido simulado sobre BAO con evaluacion exacta del FMO.
 #
 # Que responde y que NO responde
 # ------------------------------
-# Responde: si SA es funcional sobre este problema y donde queda su objetivo
-# final frente a ILS bajo el mismo presupuesto de 18 minutos (15 semillas, la
-# misma cantidad que las condiciones de ILS, para que las distribuciones sean
-# comparables).
+# Responde: si SA con enfriamiento es funcional sobre este problema y donde
+# queda su objetivo final frente a ILS bajo el mismo presupuesto de 18 minutos.
 #
-# NO responde cual es la mejor temperatura. Barrer temperaturas a mano seria
-# hacer a mano lo que irace hace sistematicamente, y el informe ya declara a
-# irace como el mecanismo de calibracion. La calibracion de T, del paso del
-# vecindario y del resto de los hiperparametros queda explicitamente fuera.
+# NO responde cual es el mejor esquema de enfriamiento. Barrer temperaturas a
+# mano seria hacer a mano lo que irace hace sistematicamente, y el informe ya
+# declara a irace como el mecanismo de calibracion.
 #
-# De donde sale T = 1000
-# ----------------------
+# TRAMPA DEL PARSER: "ratio" no es una razon, es un decremento absoluto
+# ---------------------------------------------------------------------
+# emili::Metropolis::accept (emilibase.cpp) actualiza la temperatura asi:
+#
+#     temperature = (alpha * temperature) - beta;     // beta == el token "ratio"
+#
+# El constructor de tres argumentos que usa sa_metropolis fija alpha = 1 y
+# interval = 1, de modo que el esquema resultante es LINEAL y se aplica en cada
+# iteracion: T_{k+1} = T_k - beta. Pasarle 0.95 esperando enfriamiento
+# geometrico restaria 0.95 grados por iteracion y la temperatura no bajaria
+# nunca dentro del presupuesto. Para geometrico real hace falta el token saacc
+# con ratio 0 y alpha < 1.
+#
+# De donde salen T_inicial, T_final y el decremento
+# -------------------------------------------------
 # Metropolis acepta un empeoramiento con probabilidad exp(-delta/T), asi que T
 # solo tiene sentido en la escala de los delta del problema. Midiendo los 7387
 # empeoramientos observados en las 120 trayectorias de la matriz de presupuesto
@@ -27,23 +37,33 @@ set -uo pipefail
 #
 #     p25 = 360    mediana = 901    p75 = 1919    media = 1427
 #
-# lo que da estas tasas de aceptacion:
+# T_inicial = 1300: exp(-901/1300) = 0,50. Al arrancar acepta la mitad de los
+# empeoramientos de magnitud tipica, que es el regimen de exploracion.
 #
-#     T =   100  ->  6,8 %      T =  2500  ->  64,8 %
-#     T =   500  -> 27,7 %      T =  5000  ->  78,3 %
-#     T =  1000  -> 43,0 %      T = 25000  ->  94,6 %
+# T_final = 80: exp(-360/80) = 0,011. Al cerrar rechaza practicamente todo,
+# incluidos los empeoramientos chicos, y la busqueda queda en descenso puro.
 #
-# T = 1000 deja la aceptacion cerca del equilibrio entre aceptar y rechazar, que
-# es el regimen razonable para una temperatura CONSTANTE. Nota: esta Metropolis
-# no enfria, asi que la tasa se mantiene durante toda la corrida; no es SA
-# clasico con esquema de enfriamiento, y conviene reportarlo con ese nombre.
+# El decremento sale del presupuesto REAL de iteraciones, no de una convencion.
+# A 14 evaluaciones exactas del FMO por minuto (medido con paralelismo 4), 18
+# minutos dan unas 250 iteraciones por corrida. Enfriar de 1300 a 80 en 250
+# pasos lineales pide beta = (1300 - 80) / 250 = 4,88, que redondeamos a 5.
+#
+# Ese conteo es una estimacion: si la contencion baja el rendimiento, la
+# temperatura no alcanza a llegar a T_final; si lo sube, la corrida termina en
+# descenso puro, que es el cierre deseado de todos modos. Se prefirio el
+# redondeo hacia arriba porque el segundo caso degrada mejor que el primero.
 
 BUDGET="${1:-1080}"
 PAR="${2:-4}"
-TEMP="${3:-1000}"
+T_START="${3:-1300}"
+T_END="${4:-80}"
 STEP="${STEP:-5}"
 CATALOG="${CATALOG:-restricted}"
 SEEDS="${SEEDS:-15}"
+# Iteraciones esperadas dentro del presupuesto, a 14 evaluaciones por minuto.
+ITERS="${ITERS:-$(( BUDGET * 14 / 60 ))}"
+BETA="${BETA:-$(awk -v a="$T_START" -v b="$T_END" -v n="$ITERS" \
+  'BEGIN{ v=(a-b)/n; printf (v<1 ? "%.3f" : "%.0f"), v }')}"
 
 if [ -z "${EMILI_AMPL_BIN_DIR:-}" ] || [ -z "${EMILI_GUROBI_BIN:-}" ]; then
   SP="$(echo ampl_gurobi/.venv/lib/python*/site-packages)"
@@ -55,8 +75,8 @@ export EMILI_GUROBI_OPTIONS="${EMILI_GUROBI_OPTIONS:-threads=4}"
 
 PY="ampl_gurobi/.venv/bin/python3"
 CAT_TOKEN=""; [ "$CATALOG" = "unrestricted" ] && CAT_TOKEN="unrestricted"
-OUT="experiments/sa/nangshift${STEP}/${CATALOG}-budget${BUDGET}s-T${TEMP}/data"
-MASTER="experiments/sa/pilot_T${TEMP}_budget${BUDGET}s.log"
+OUT="experiments/sa/nangshift${STEP}/${CATALOG}-budget${BUDGET}s-T${T_START}to${T_END}/data"
+MASTER="experiments/sa/pilot_T${T_START}to${T_END}_budget${BUDGET}s.log"
 mkdir -p "$OUT" "$(dirname "$MASTER")"
 
 log() { echo "[$(date '+%F %H:%M:%S')] $*" | tee -a "$MASTER"; }
@@ -82,7 +102,7 @@ run_one() {
     sa irandomk $CAT_TOKEN \
     tmaxiter 1000000 \
     nangshift "$STEP" \
-    metropolis "$TEMP" \
+    sa_metropolis "$T_START" "$T_END" "$BETA" \
     -it "$BUDGET" \
     rnds "$seed" \
     > "$rlog" 2>&1
@@ -97,10 +117,10 @@ run_one() {
   fi
 }
 export -f run_one
-export BUDGET TEMP STEP CATALOG CAT_TOKEN OUT PY MASTER \
+export BUDGET T_START T_END BETA STEP CATALOG CAT_TOKEN OUT PY MASTER \
        EMILI_AMPL_BIN_DIR EMILI_GUROBI_BIN EMILI_GUROBI_OPTIONS
 
-log "PILOTO SA START  T=${TEMP}  paso=${STEP}  catalogo=${CATALOG}  presupuesto=${BUDGET}s  semillas=${SEEDS}  paralelismo=${PAR}"
+log "PILOTO SA START  T=${T_START}->${T_END} beta=${BETA} (${ITERS} iter estimadas)  paso=${STEP}  catalogo=${CATALOG}  presupuesto=${BUDGET}s  semillas=${SEEDS}  paralelismo=${PAR}"
 
 DONE=0
 for seed in $(seq -w 1 "$SEEDS"); do
