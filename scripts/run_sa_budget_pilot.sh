@@ -43,15 +43,29 @@ set -uo pipefail
 # T_final = 80: exp(-360/80) = 0,011. Al cerrar rechaza practicamente todo,
 # incluidos los empeoramientos chicos, y la busqueda queda en descenso puro.
 #
-# El decremento sale del presupuesto REAL de iteraciones, no de una convencion.
-# A 14 evaluaciones exactas del FMO por minuto (medido con paralelismo 4), 18
-# minutos dan unas 250 iteraciones por corrida. Enfriar de 1300 a 80 en 250
-# pasos lineales pide beta = (1300 - 80) / 250 = 4,88, que redondeamos a 5.
+# El decremento sale del presupuesto REAL de iteraciones, no de una convencion,
+# porque el framework solo sabe enfriar por iteracion y no por tiempo.
 #
-# Ese conteo es una estimacion: si la contencion baja el rendimiento, la
-# temperatura no alcanza a llegar a T_final; si lo sube, la corrida termina en
-# descenso puro, que es el cierre deseado de todos modos. Se prefirio el
-# redondeo hacia arriba porque el segundo caso degrada mejor que el primero.
+# La matriz de ILS rendia 14 evaluaciones por minuto, pero ese numero NO aplica
+# aca: buena parte de esas evaluaciones pegaban en la cache del vecindario y no
+# llamaban a Gurobi. SA muestrea con Neighborhood::random, falla la cache casi
+# siempre y paga el solve completo en cada iteracion. Medido directamente sobre
+# una corrida SA de 120 s (trajectory.csv, columna cached en false en todas las
+# filas): 12 evaluaciones, es decir 6 por minuto, unas 108 en los 18 minutos.
+#
+# Esa medicion se tomo con otros cuatro procesos compitiendo por la maquina y
+# con threads=2, asi que 6 por minuto es un PISO y no el rendimiento esperado
+# del piloto, que correra solo. Aun asi se calibra contra el piso, por la
+# asimetria del error:
+#
+#   - Si se calibra al techo y el rendimiento real es el piso, la temperatura
+#     se queda en ~760 al agotarse el presupuesto: nunca enfria, y el algoritmo
+#     degenera en la caminata aleatoria sesgada que este cambio vino a eliminar.
+#   - Si se calibra al piso y el rendimiento real es el techo, la temperatura
+#     llega a T_final antes de tiempo y el resto de la corrida es descenso puro,
+#     que es justamente el cierre que se le pide a un esquema de enfriamiento.
+#
+# Enfriar de 1300 a 80 en 108 pasos pide beta = (1300 - 80) / 108 = 11,3.
 
 BUDGET="${1:-1080}"
 PAR="${2:-4}"
@@ -60,8 +74,8 @@ T_END="${4:-80}"
 STEP="${STEP:-5}"
 CATALOG="${CATALOG:-restricted}"
 SEEDS="${SEEDS:-15}"
-# Iteraciones esperadas dentro del presupuesto, a 14 evaluaciones por minuto.
-ITERS="${ITERS:-$(( BUDGET * 14 / 60 ))}"
+# Iteraciones esperadas dentro del presupuesto, al piso medido de 6 por minuto.
+ITERS="${ITERS:-$(( BUDGET * 6 / 60 ))}"
 BETA="${BETA:-$(awk -v a="$T_START" -v b="$T_END" -v n="$ITERS" \
   'BEGIN{ v=(a-b)/n; printf (v<1 ? "%.3f" : "%.0f"), v }')}"
 
