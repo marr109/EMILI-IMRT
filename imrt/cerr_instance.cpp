@@ -1,4 +1,5 @@
 #include "cerr_instance.h"
+#include <cstdlib>
 
 #include <fstream>
 #include <sstream>
@@ -44,7 +45,20 @@ CerrFmoSource::CerrFmoSource(const std::string& dir)
     max_intensity_ = 15000.0;
     w_under_       = 1.0;
     w_over_        = 0.5;
+    // La penalizacion de sobredosis en PTV esta DESACTIVADA por defecto. No es
+    // un olvido: el modelo optimiza cobertura del PTV y proteccion de los OAR,
+    // no homogeneidad, y con w_ptv_over_ = 0 el termino w de fmo.mod queda sin
+    // costo y la fila ptv_ceiling no ata. La consecuencia es que la dosis en el
+    // PTV puede crecer sin penalizacion --Dmax observado ~5x la prescripcion--
+    // y los indices de conformidad y homogeneidad no describen calidad de plan.
+    //
+    // EMILI_W_PTV_OVER activa el termino sin recompilar, para poder medir su
+    // efecto. ATENCION: al activarlo el objetivo deja de ser comparable con las
+    // corridas previas. No es el mismo problema mejor resuelto, es otro problema.
     w_ptv_over_    = 0.0;
+    if (const char* env_w = std::getenv("EMILI_W_PTV_OVER")) {
+        w_ptv_over_ = std::atof(env_w);
+    }
 
     int off = 0;
     for (const char* name : kPtvNames) {
