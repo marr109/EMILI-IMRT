@@ -58,6 +58,8 @@ def main():
     ap.add_argument("--window", type=int, default=15)
     ap.add_argument("--max-iter", type=int, default=200,
                     help="corta el eje x; las corridas degeneradas llegan a decenas de miles")
+    ap.add_argument("--layout", choices=("vertical", "apaisado"), default="vertical",
+                    help="apaisado dispone los paneles en fila, para diapositiva")
     ap.add_argument("--title", default="")
     ap.add_argument("--output", required=True)
     a = ap.parse_args()
@@ -67,9 +69,17 @@ def main():
         print("sin trayectorias en %s" % a.data, file=sys.stderr)
         return 1
 
-    fig, axes = plt.subplots(3, 1, figsize=(11, 11), sharex=True,
-                             gridspec_kw={"height_ratios": [1, 1.2, 1.4]})
-    ax_t, ax_a, ax_o = axes
+    if a.layout == "apaisado":
+        # En una diapositiva el alto disponible es la mitad del ancho: tres paneles
+        # apilados dejan cada uno demasiado bajo para leer sus ejes.
+        fig, axes = plt.subplots(1, 3, figsize=(15, 4.6))
+        ax_t, ax_a, ax_o = axes
+        for ax in axes:
+            ax.set_xlabel("Iteración de SA")
+    else:
+        fig, axes = plt.subplots(3, 1, figsize=(11, 11), sharex=True,
+                                 gridspec_kw={"height_ratios": [1, 1.2, 1.4]})
+        ax_t, ax_a, ax_o = axes
 
     k_end = int((a.t_start - a.t_end) / a.beta) + 1
     ks = list(range(1, a.max_iter + 1))
@@ -108,7 +118,8 @@ def main():
     ax_a.set_ylabel("Aceptación aparente\n(ventana %d, %%)" % a.window)
     ax_a.grid(alpha=0.25)
     ax_o.set_ylabel("Objetivo FMO")
-    ax_o.set_xlabel("Iteración de SA (llamadas a accept)")
+    if a.layout != "apaisado":
+        ax_o.set_xlabel("Iteración de SA (llamadas a accept)")
     ax_o.grid(alpha=0.25)
 
     note = "%d corridas" % len(runs)
