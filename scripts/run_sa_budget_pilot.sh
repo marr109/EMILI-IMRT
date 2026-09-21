@@ -72,6 +72,19 @@ PAR="${2:-4}"
 T_START="${3:-1300}"
 T_END="${4:-80}"
 STEP="${STEP:-5}"
+# NEIGH selecciona el operador que SA usa para muestrear:
+#   shift  -> nangshift <STEP>. random() sortea saltos en (STEP, 2*STEP): con
+#             STEP=5 son 6..9 posiciones. Es el operador de PERTURBACION de ILS,
+#             no el vecindario que enumeran First/Best. Rompe la invariante de
+#             residuo modulo STEP, que es lo que lo hace ergodico, pero su salto
+#             minimo es mayor que un paso de busqueda local: al enfriar no puede
+#             refinar porque todos sus candidatos caen lejos.
+#   multi  -> nangshiftmulti con escala 1 2 3 5 8 13 21. Sortea el paso de la
+#             lista en vez de inflarlo, asi que cubre grueso y fino con el mismo
+#             operador. Es ergodico porque la lista incluye el 1. La seleccion
+#             entre escalas la hace la propia aceptacion: caliente admite saltos
+#             de 21, frio solo sobrevive el paso de 1.
+NEIGH="${NEIGH:-shift}"
 CATALOG="${CATALOG:-restricted}"
 SEEDS="${SEEDS:-15}"
 # Iteraciones esperadas dentro del presupuesto, al piso medido de 6 por minuto.
@@ -87,10 +100,16 @@ if [ -z "${EMILI_AMPL_BIN_DIR:-}" ] || [ -z "${EMILI_GUROBI_BIN:-}" ]; then
 fi
 export EMILI_GUROBI_OPTIONS="${EMILI_GUROBI_OPTIONS:-threads=4}"
 
+case "$NEIGH" in
+  shift) NEIGH_TOKEN="nangshift $STEP"; NEIGH_SUF="" ;;
+  multi) NEIGH_TOKEN="nangshiftmulti 7 1 2 3 5 8 13 21"; NEIGH_SUF="-multi" ;;
+  *) echo "NEIGH debe ser shift o multi (recibido: $NEIGH)" >&2; exit 1 ;;
+esac
+
 PY="ampl_gurobi/.venv/bin/python3"
 CAT_TOKEN=""; [ "$CATALOG" = "unrestricted" ] && CAT_TOKEN="unrestricted"
-OUT="experiments/sa/nangshift${STEP}/${CATALOG}-budget${BUDGET}s-T${T_START}to${T_END}/data"
-MASTER="experiments/sa/pilot_T${T_START}to${T_END}_budget${BUDGET}s.log"
+OUT="experiments/sa/nangshift${STEP}${NEIGH_SUF}/${CATALOG}-budget${BUDGET}s-T${T_START}to${T_END}/data"
+MASTER="experiments/sa/pilot${NEIGH_SUF}_T${T_START}to${T_END}_budget${BUDGET}s.log"
 mkdir -p "$OUT" "$(dirname "$MASTER")"
 
 log() { echo "[$(date '+%F %H:%M:%S')] $*" | tee -a "$MASTER"; }
@@ -115,7 +134,7 @@ run_one() {
   ./build/emili instances/CERR_Prostate baoimrt 4 csv "$traj" \
     sa irandomk $CAT_TOKEN \
     tmaxiter 1000000 \
-    nangshift "$STEP" \
+    $NEIGH_TOKEN \
     sa_metropolis "$T_START" "$T_END" "$BETA" \
     -it "$BUDGET" \
     rnds "$seed" \
@@ -131,10 +150,10 @@ run_one() {
   fi
 }
 export -f run_one
-export BUDGET T_START T_END BETA STEP CATALOG CAT_TOKEN OUT PY MASTER \
+export BUDGET T_START T_END BETA STEP NEIGH NEIGH_TOKEN NEIGH_SUF CATALOG CAT_TOKEN OUT PY MASTER \
        EMILI_AMPL_BIN_DIR EMILI_GUROBI_BIN EMILI_GUROBI_OPTIONS
 
-log "PILOTO SA START  T=${T_START}->${T_END} beta=${BETA} (${ITERS} iter estimadas)  paso=${STEP}  catalogo=${CATALOG}  presupuesto=${BUDGET}s  semillas=${SEEDS}  paralelismo=${PAR}"
+log "PILOTO SA START  vecindario=${NEIGH} [${NEIGH_TOKEN}]  T=${T_START}->${T_END} beta=${BETA} (${ITERS} iter estimadas)  paso=${STEP}  catalogo=${CATALOG}  presupuesto=${BUDGET}s  semillas=${SEEDS}  paralelismo=${PAR}"
 
 DONE=0
 for seed in $(seq -w 1 "$SEEDS"); do
