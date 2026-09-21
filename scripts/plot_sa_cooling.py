@@ -78,6 +78,7 @@ def main():
         # resumiendo cada tramo de iteraciones en una caja.
         from collections import defaultdict
         from matplotlib.lines import Line2D
+        from matplotlib.patches import Patch
         bins = defaultdict(list)
         for path in runs:
             objs, _, _ = load(path)
