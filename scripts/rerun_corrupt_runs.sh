@@ -40,7 +40,10 @@ say() { echo "[$(date '+%F %H:%M:%S')] $*"; }
 
 # Verifica que el binario tenga el fix antes de regenerar nada: re-correr con el
 # binario viejo reproduciria exactamente el mismo dato invalido.
-if ! strings ./build/emili 2>/dev/null | grep -q "solve_result="; then
+# grep -a en vez de strings: strings vive en /usr/bin y no siempre esta en el
+# PATH que hereda un screen desatendido, y entonces la tuberia sale vacia y el
+# guard rechaza un binario que si tiene el fix.
+if ! grep -aq "solve_result=" ./build/emili 2>/dev/null; then
   echo "ERROR: ./build/emili no contiene la verificacion de solve_result." >&2
   echo "       Compilar primero, o instalar build-fix/emili en build/emili." >&2
   exit 1
