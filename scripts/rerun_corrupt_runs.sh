@@ -12,34 +12,32 @@ set -uo pipefail
 # solver caido por completo el valor emitido era 0, que en un problema de
 # minimizacion es el mejor posible: la busqueda lo habria tomado como optimo.
 #
-# Sintoma en los datos: decenas de configuraciones de angulos distintas con el
-# mismo objetivo hasta el decimal, y busquedas que cortaban por falso minimo
-# local porque ningun vecino parecia mejorar. La corrida de referencia
-# (local_search/nangshift10/unrestricted/best/seed02) evaluo 29 soluciones en
-# vez de 101 y reporto 97584,1 donde la misma configuracion vale 97284,6.
+# Sintoma: decenas de configuraciones de angulos distintas con el mismo objetivo
+# hasta el decimal, y busquedas que cortaban por falso minimo local.
+# Corregido en imrt_fmo.cpp verificando solve_result.
 #
-# Corregido en imrt_fmo.cpp verificando solve_result: un solve incompleto ahora
-# lanza excepcion y el vecino se descarta con 1e30 en vez de contaminar la
-# trayectoria.
+# Alcance: 10 corridas, TODAS anteriores a la matriz de presupuesto de tiempo.
+# experiments/ils/*/*budget1080s* (0 de 300) y experiments/sa (0 de 30) estan
+# limpios. Este script cubre las 6 que sustentan tablas o figuras del informe;
+# quedan fuera tabu/ y _legacy/, que nada cita.
 #
-# Alcance
-# -------
-# Afectadas 10 corridas, TODAS anteriores a la matriz de presupuesto de tiempo.
-# Los datos de experiments/ils/*/*budget1080s* y de experiments/sa estan limpios:
-# 0 de 300 y 0 de 15 respectivamente.
-#
-# Este script cubre las que sustentan tablas o figuras del informe. Quedan fuera
-# tabu/ (fuera del alcance actual) y _legacy/ (historico, no citado).
-#
-# Requiere el binario corregido en ./build/emili.
+# Por que invoca los comandos directamente
+# ----------------------------------------
+# Una version previa delegaba en los scripts de lote confiando en que saltearian
+# las corridas ya completas. Esa suposicion es falsa en este repositorio: los
+# scripts detectan lo completo buscando "Found solution" en el run.log, y NINGUNO
+# de los run.log del servidor tiene esa marca --se generaron con una version
+# anterior del binario que no la imprimia--. El resultado fue que el lote empezo
+# a regenerar desde seed01 y sobrescribio una corrida sana antes de detenerlo.
+# Por eso aqui cada corrida corrupta se invoca por separado, con su comando
+# exacto reconstruido de los scripts de lote correspondientes, y no se toca
+# ninguna otra semilla.
 
 BACKUP="experiments/_corrupt_backup_$(date +%Y%m%d)"
 DRY="${DRY:-0}"
 
 say() { echo "[$(date '+%F %H:%M:%S')] $*"; }
 
-# Verifica que el binario tenga el fix antes de regenerar nada: re-correr con el
-# binario viejo reproduciria exactamente el mismo dato invalido.
 # grep -a en vez de strings: strings vive en /usr/bin y no siempre esta en el
 # PATH que hereda un screen desatendido, y entonces la tuberia sale vacia y el
 # guard rechaza un binario que si tiene el fix.
@@ -49,45 +47,58 @@ if ! grep -aq "solve_result=" ./build/emili 2>/dev/null; then
   exit 1
 fi
 
-CORRUPT=(
-  "experiments/local_search/nangshift10/unrestricted/data/best/seed02"
-  "experiments/ils/nangshift5/restricted/data/first/seed12"
-  "experiments/ils/nangshift5/restricted-adaptive/data/first/seed03"
-  "experiments/ils/nangshift5/unrestricted-adaptive/data/first/seed03"
-  "experiments/ils/nangshift10/restricted-adaptive/data/first/seed03"
-  "experiments/ils/nangshift10/unrestricted-adaptive/data/first/seed03"
+if [ -z "${EMILI_AMPL_BIN_DIR:-}" ] || [ -z "${EMILI_GUROBI_BIN:-}" ]; then
+  SP="$(echo ampl_gurobi/.venv/lib/python*/site-packages)"
+  [ -d "$SP/ampl_module_base" ] || { echo "No se encontro ampl_module_base bajo $SP" >&2; exit 1; }
+  export EMILI_AMPL_BIN_DIR="$PWD/$SP/ampl_module_base/bin"
+  export EMILI_GUROBI_BIN="$PWD/$SP/ampl_module_gurobi/bin/gurobi"
+fi
+export EMILI_GUROBI_OPTIONS="${EMILI_GUROBI_OPTIONS:-threads=4}"
+
+# dir | semilla | tokens del algoritmo, tal como los arma su script de lote
+#   ils/*            -> run_ils_batch.sh          (prangshift STEP 3)
+#   ils/*-adaptive/* -> run_ils_adaptive_batch.sh (prangshiftadaptive STEP 4 2)
+#   local_search/*   -> corrida manual            (locmin, sin perturbacion)
+RUNS=(
+  "experiments/ils/nangshift5/restricted/data/first/seed12|12|ils first irandomk locmin nangshift 5 tmaxiter 10 prangshift 5 3 baoimprove rejectrepeated"
+  "experiments/ils/nangshift5/restricted-adaptive/data/first/seed03|3|ils first irandomk locmin nangshift 5 tmaxiter 10 prangshiftadaptive 5 4 2 baoimprove rejectrepeated"
+  "experiments/ils/nangshift5/unrestricted-adaptive/data/first/seed03|3|ils first irandomk unrestricted locmin nangshift 5 tmaxiter 10 prangshiftadaptive 5 4 2 baoimprove rejectrepeated"
+  "experiments/ils/nangshift10/restricted-adaptive/data/first/seed03|3|ils first irandomk locmin nangshift 10 tmaxiter 10 prangshiftadaptive 10 4 2 baoimprove rejectrepeated"
+  "experiments/ils/nangshift10/unrestricted-adaptive/data/first/seed03|3|ils first irandomk unrestricted locmin nangshift 10 tmaxiter 10 prangshiftadaptive 10 4 2 baoimprove rejectrepeated"
+  "experiments/local_search/nangshift10/unrestricted/data/best/seed02|2|best irandomk unrestricted locmin nangshift 10"
 )
 
-say "respaldando ${#CORRUPT[@]} corridas en ${BACKUP}/"
-for d in "${CORRUPT[@]}"; do
-  [ -d "$d" ] || { say "  AUSENTE (se omite): $d"; continue; }
-  dest="${BACKUP}/${d#experiments/}"
-  if [ "$DRY" = "1" ]; then say "  [dry] $d -> $dest"; continue; fi
-  mkdir -p "$(dirname "$dest")" && cp -r "$d" "$dest" && rm -rf "$d"
-  say "  respaldada y removida: ${d#experiments/}"
+say "regenerando ${#RUNS[@]} corridas invalidas (ninguna otra semilla se toca)"
+for entry in "${RUNS[@]}"; do
+  IFS='|' read -r dir seed tokens <<< "$entry"
+
+  # Respalda si todavia existe: una ejecucion previa pudo haberla removido ya.
+  if [ -d "$dir" ]; then
+    dest="${BACKUP}/${dir#experiments/}"
+    if [ "$DRY" = "1" ]; then
+      say "  [dry] respaldaria $dir"
+    else
+      mkdir -p "$(dirname "$dest")" && cp -r "$dir" "$dest" && rm -rf "$dir"
+      say "  respaldada: ${dir#experiments/}"
+    fi
+  fi
+
+  if [ "$DRY" = "1" ]; then
+    say "  [dry] ./build/emili ... csv ${dir}/trajectory.csv ${tokens} rnds ${seed}"
+    continue
+  fi
+
+  mkdir -p "$dir"
+  say "  corriendo ${dir#experiments/}"
+  # shellcheck disable=SC2086
+  ./build/emili instances/CERR_Prostate baoimrt 4 csv "${dir}/trajectory.csv" \
+    $tokens rnds "$seed" > "${dir}/run.log" 2>&1
+
+  if grep -q "Conformity Index\|Found solution" "${dir}/run.log" 2>/dev/null; then
+    say "    OK"
+  else
+    say "    SIN MARCA DE CORRIDA COMPLETA -- revisar ${dir}/run.log"
+  fi
 done
-[ "$DRY" = "1" ] && { say "DRY RUN: no se regenero nada"; exit 0; }
-
-# Los scripts de lote saltean toda corrida que ya tenga su marca de completa, asi
-# que al haber removido solo las invalidas regeneran unicamente esas.
-say "regenerando ils/nangshift5/restricted/first"
-scripts/run_ils_batch.sh 5 first restricted
-
-for step in 5 10; do
-  for cat in restricted unrestricted; do
-    say "regenerando ils/nangshift${step}/${cat}-adaptive/first"
-    scripts/run_ils_adaptive_batch.sh "$step" first "$cat"
-  done
-done
-
-# local_search/nangshift10/unrestricted/best no tiene script de lote: esa
-# condicion se corrio a mano. El comando se reconstruye desde su run.log, que
-# registra BEST IMPROVEMENT, irandomk sin catalogo restringido, terminacion por
-# minimo local y nangshift 10.
-say "regenerando local_search/nangshift10/unrestricted/best/seed02"
-D="experiments/local_search/nangshift10/unrestricted/data/best/seed02"
-mkdir -p "$D"
-./build/emili instances/CERR_Prostate baoimrt 4 csv "$D/trajectory.csv" \
-  best irandomk unrestricted locmin nangshift 10 rnds 2 > "$D/run.log" 2>&1
 
 say "COMPLETO. Verificar con la deteccion de objetivos repetidos antes de reanalizar."
