@@ -6,6 +6,8 @@
 #include <csignal>
 #include <cstdlib>
 #include <iostream>
+#include <stdexcept>
+#include <string>
 
 #ifndef EMILI_REPO_ROOT
 #define EMILI_REPO_ROOT "."
@@ -290,6 +292,23 @@ FmoResult ImrtFmoSolver::solve(const std::vector<int>& active_angles)
         ampl_->solve();
 
         auto t_d = clk::now();
+
+        // AMPL conserva el objetivo de la instancia ANTERIOR cuando el solve no
+        // se completa -- licencia caida, modelo infactible, solver interrumpido --
+        // y getObjective().value() lo devuelve sin senalar nada. Ese valor viaja
+        // como si fuera una evaluacion legitima. En las corridas afectadas se
+        // observaron decenas de configuraciones de angulos distintas compartiendo
+        // el mismo objetivo hasta el decimal, y busquedas que cortaban por falso
+        // minimo local: ningun vecino "mejoraba" porque todos devolvian lo mismo.
+        // El mensaje del solver quedaba en el log, pero nada lo miraba.
+        //
+        // Verificar solve_result convierte ese fallo silencioso en excepcion, que
+        // el catch de abajo traduce a 1e30. El vecino queda descartado en vez de
+        // contaminar la trayectoria, y la corrida continua.
+        const std::string solve_result = ampl_->getValue("solve_result").str();
+        if (solve_result != "solved") {
+            throw std::runtime_error("solve_result=" + solve_result);
+        }
 
         double f = ampl_->getObjective("fmo_objective").value();
 
