@@ -79,6 +79,10 @@ def main(argv=None):
     p.add_argument("--seeds", required=True, help='e.g. "1-15" or "1,2,3,11-15"')
     p.add_argument("--title", required=True)
     p.add_argument("--ylabel", default="Objetivo final (FMO)")
+    p.add_argument("--figsize", default=None,
+                   help="ancho,alto en pulgadas; por defecto se deduce del numero de cajas")
+    p.add_argument("--legend-title", default="Orden de escaneo",
+                   help="encabezado del recuadro de leyenda")
     p.add_argument("--output", required=True)
     args = p.parse_args(argv)
 
@@ -123,8 +127,11 @@ def main(argv=None):
         x += GROUP_GAP
 
     n_boxes = len(labels)
-    fig_width = max(7.0, 1.1 * n_boxes + 2.5)
-    fig, ax = plt.subplots(figsize=(fig_width, 6.5))
+    if args.figsize:
+        fw, fh = [float(v) for v in args.figsize.split(",")]
+    else:
+        fw, fh = max(7.0, 1.1 * n_boxes + 2.5), 6.5
+    fig, ax = plt.subplots(figsize=(fw, fh))
 
     bp = ax.boxplot(
         datasets, positions=xpos, **{_BOXPLOT_LABEL_KW: labels}, patch_artist=True, widths=0.6,
@@ -168,7 +175,7 @@ def main(argv=None):
 
     legend_handles = [Patch(facecolor=variant_color[v], edgecolor=variant_color[v],
                              alpha=0.55, label=v) for v in variant_order]
-    ax.legend(handles=legend_handles, title="Orden de escaneo", loc="upper right",
+    ax.legend(handles=legend_handles, title=args.legend_title, loc="upper right",
               frameon=True, framealpha=0.9, fontsize=9, title_fontsize=9)
 
     ax.set_ylabel(args.ylabel)
