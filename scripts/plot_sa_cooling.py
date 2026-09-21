@@ -58,8 +58,11 @@ def main():
     ap.add_argument("--window", type=int, default=15)
     ap.add_argument("--max-iter", type=int, default=200,
                     help="corta el eje x; las corridas degeneradas llegan a decenas de miles")
-    ap.add_argument("--layout", choices=("vertical", "apaisado"), default="vertical",
-                    help="apaisado dispone los paneles en fila, para diapositiva")
+    ap.add_argument("--layout", choices=("vertical", "apaisado", "resumen"), default="vertical",
+                    help="resumen cambia las trayectorias por un boxplot del objetivo por "
+                         "tramo de iteraciones, con la temperatura superpuesta")
+    ap.add_argument("--bin", type=int, default=10,
+                    help="ancho del tramo en iteraciones (solo con --layout resumen)")
     ap.add_argument("--title", default="")
     ap.add_argument("--output", required=True)
     a = ap.parse_args()
@@ -68,6 +71,71 @@ def main():
     if not runs:
         print("sin trayectorias en %s" % a.data, file=sys.stderr)
         return 1
+
+    if a.layout == "resumen":
+        # Quince trayectorias superpuestas son ilegibles a cualquier tamano, y el
+        # mensaje --el objetivo baja mientras la temperatura baja-- se lee mejor
+        # resumiendo cada tramo de iteraciones en una caja.
+        from collections import defaultdict
+        from matplotlib.lines import Line2D
+        bins = defaultdict(list)
+        for path in runs:
+            objs, _, _ = load(path)
+            for k, v in enumerate(objs[:a.max_iter], start=1):
+                bins[(k - 1) // a.bin].append(v)
+        keys = sorted(bins)
+        centers = [k * a.bin + a.bin / 2.0 for k in keys]
+
+        fig, ax = plt.subplots(figsize=(11, 5.5))
+        bp = ax.boxplot([bins[k] for k in keys], positions=centers,
+                        widths=a.bin * 0.62, patch_artist=True, showfliers=False,
+                        medianprops=dict(color="#2b2b2b", linewidth=1.6),
+                        whiskerprops=dict(color="#555555", linewidth=1.1),
+                        capprops=dict(color="#555555", linewidth=1.1),
+                        boxprops=dict(linewidth=1.1))
+        for patch in bp["boxes"]:
+            patch.set_facecolor("#1f77b4")
+            patch.set_alpha(0.35)
+            patch.set_edgecolor("#1f77b4")
+
+        ticks = [k * a.bin for k in keys] + [a.max_iter]
+        ax.set_xticks(ticks)
+        ax.set_xticklabels([str(int(t)) for t in ticks])
+        ax.set_xlim(0, a.max_iter + a.bin * 0.6)
+        ax.set_xlabel("Iteracion de SA")
+        ax.set_ylabel("Objetivo FMO")
+        ax.grid(alpha=0.25, axis="y")
+        ax.spines["top"].set_visible(False)
+
+        ax2 = ax.twinx()
+        ks = list(range(1, a.max_iter + 1))
+        ax2.plot(ks, [max(a.t_end, a.t_start - a.beta * (k - 1)) for k in ks],
+                 color="#d62728", linewidth=2.2, zorder=5)
+        ax2.set_ylabel("Temperatura", color="#d62728")
+        ax2.tick_params(axis="y", colors="#d62728")
+        ax2.spines["top"].set_visible(False)
+        ax2.set_ylim(0, a.t_start * 1.06)
+        ax2.grid(False)
+        k_end = int((a.t_start - a.t_end) / a.beta) + 1
+        ax2.axvline(k_end, color="#d62728", ls="--", linewidth=1.2, alpha=0.55)
+        ax2.annotate("T alcanza %g en k=%d" % (a.t_end, k_end),
+                     xy=(k_end, a.t_end), xytext=(a.max_iter * 0.42, a.t_start * 0.88),
+                     fontsize=9, color="#d62728")
+
+        ax.legend(handles=[
+            Patch(facecolor="#1f77b4", alpha=0.35, edgecolor="#1f77b4",
+                  label="Objetivo por tramo de %d iteraciones" % a.bin),
+            Line2D([0], [0], color="#d62728", linewidth=2.2, label="Temperatura")],
+            loc="upper center", bbox_to_anchor=(0.5, -0.13), frameon=False,
+            ncol=2, fontsize=9)
+        ax.text(0.99, 0.02, "n=%d semillas por caja" % len(runs),
+                transform=ax.transAxes, ha="right", fontsize=8.5, color="#555555")
+        if a.title:
+            ax.set_title(a.title, wrap=True)
+        fig.tight_layout()
+        fig.savefig(a.output, dpi=150)
+        print("escrito: %s" % a.output)
+        return 0
 
     if a.layout == "apaisado":
         # En una diapositiva el alto disponible es la mitad del ancho: tres paneles
