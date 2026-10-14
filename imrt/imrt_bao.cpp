@@ -1,3 +1,4 @@
+#include <functional>
 #include "imrt_bao.h"
 
 #include "../emilibase.h"
@@ -741,6 +742,10 @@ void AngleShiftMultiPerturbation::buildDegreeOrder()
 
     degree_rank_.resize(n_angles_);
     for (int pos = 0; pos < n_angles_; ++pos) degree_rank_[degree_order_[pos]] = pos;
+
+    degree_to_idx_.assign(360, -1);
+    for (int i = 0; i < n_angles_; ++i)
+        degree_to_idx_[((bao_.angleDegree(i) % 360) + 360) % 360] = i;
 }
 
 // Mueve n_moves ángulos activos DISTINTOS de nb, cada uno una magnitud
@@ -753,7 +758,11 @@ static void applyAngleShiftMultiMove(BaoSolution* nb, int n_angles,
                                       int n_moves,
                                       const std::vector<int>& degree_order,
                                       const std::vector<int>& degree_rank,
-                                      int base_step)
+                                      int base_step,
+                                      const std::vector<int>* magnitudes_deg = nullptr,
+                                      const BaoProblem* bao = nullptr,
+                                      const std::vector<int>* degree_to_idx = nullptr,
+                                      const std::function<void()>* after_move = nullptr)
 {
     int K = (int)nb->active_angles_.size();
     n_moves = std::min(n_moves, K);   // no se puede mover más ángulos distintos que K
@@ -785,6 +794,21 @@ static void applyAngleShiftMultiMove(BaoSolution* nb, int n_angles,
         int ai = slot_order[m];
         const int max_attempts = 8;
         for (int attempt = 0; attempt < max_attempts; ++attempt) {
+            if (magnitudes_deg) {
+                // Modo magnitud discreta: +-m grados reales (no posiciones del
+                // catalogo). Si el grado destino no existe o esta ocupado,
+                // reintenta; si se agotan los intentos el slot queda igual.
+                int mag = (*magnitudes_deg)[emili::generateRandomNumber() % magnitudes_deg->size()];
+                int sign = (emili::generateRandomNumber() % 2) ? 1 : -1;
+                int cur_idx = nb->active_angles_[ai];
+                int tgt_deg = (((bao->angleDegree(cur_idx) + sign * mag) % 360) + 360) % 360;
+                int cand = (*degree_to_idx)[tgt_deg];
+                if (cand < 0 || active_flag[cand]) continue;
+                active_flag[cur_idx] = false;
+                active_flag[cand] = true;
+                nb->active_angles_[ai] = cand;
+                break;
+            }
             int dir = emili::generateRandomNumber() % 2;
             int step_mod = (base_step > 1)
                 ? base_step + 1 + (emili::generateRandomNumber() % span)
@@ -804,6 +828,9 @@ static void applyAngleShiftMultiMove(BaoSolution* nb, int n_angles,
             nb->active_angles_[ai] = candidate;
             break;
         }
+        // Modo stepwise: el llamador evalua el estado intermedio tras cada slot
+        // (aunque no se haya podido mover). No consume numeros aleatorios.
+        if (after_move) (*after_move)();
     }
 }
 
@@ -815,14 +842,19 @@ emili::Solution* AngleShiftMultiPerturbation::perturb(emili::Solution* solution)
     int K = (int)nb->active_angles_.size();
     int n_moves = std::min(numSteps_, K);   // no se puede mover más ángulos distintos que K
 
-    applyAngleShiftMultiMove(nb, n_angles_, n_moves, degree_order_, degree_rank_, step_);
+    std::function<void()> eval_each = [this, nb]() { bao_.evaluateSolution(*nb); };
+    applyAngleShiftMultiMove(nb, n_angles_, n_moves, degree_order_, degree_rank_, step_,
+                              magnitudes_.empty() ? nullptr : &magnitudes_, &bao_, &degree_to_idx_,
+                              stepwise_ ? &eval_each : nullptr);
+    if (stepwise_) return nb;   // el ultimo movimiento ya evaluo el estado final
 
-    // Una sola resolución FMO al final, con los n_moves ángulos ya
-    // desplazados — los estados intermedios (después del 1er, 2do... giro)
-    // nunca se usan para decidir nada, evaluarlos aparte solo gastaba
-    // resoluciones de más sin aportar al algoritmo (quedó así al principio
-    // para poder auditar cada movimiento por separado; ya verificado que la
-    // lógica de slots distintos funciona bien, no hace falta mantenerlo).
+    // Por defecto: una sola resolución FMO al final, con los n_moves ángulos
+    // ya desplazados — los estados intermedios nunca se usan para decidir
+    // nada, evaluarlos aparte solo gasta resoluciones de más. Opt-in
+    // (stepwise_, token "stepwise"): se evalúa tras CADA movimiento
+    // individual (n_moves resoluciones, cada estado intermedio queda
+    // registrado como cualquier otra evaluación); la solución devuelta sigue
+    // siendo el estado final y la secuencia aleatoria es idéntica.
     bao_.evaluateSolution(*nb);
     return nb;
 }
@@ -837,6 +869,10 @@ void AdaptiveAngleShiftPerturbation::buildDegreeOrder()
 
     degree_rank_.resize(n_angles_);
     for (int pos = 0; pos < n_angles_; ++pos) degree_rank_[degree_order_[pos]] = pos;
+
+    degree_to_idx_.assign(360, -1);
+    for (int i = 0; i < n_angles_; ++i)
+        degree_to_idx_[((bao_.angleDegree(i) % 360) + 360) % 360] = i;
 }
 
 emili::Solution* AdaptiveAngleShiftPerturbation::perturb(emili::Solution* solution)
@@ -870,10 +906,13 @@ emili::Solution* AdaptiveAngleShiftPerturbation::perturb(emili::Solution* soluti
     int effective_numSteps = std::min(level_ + 1, maxNumSteps_);
 
     BaoSolution* nb = static_cast<BaoSolution*>(solution->clone());
+    std::function<void()> eval_each = [this, nb]() { bao_.evaluateSolution(*nb); };
     applyAngleShiftMultiMove(nb, n_angles_, effective_numSteps, degree_order_,
-                              degree_rank_, step_);
+                              degree_rank_, step_,
+                              magnitudes_.empty() ? nullptr : &magnitudes_, &bao_, &degree_to_idx_,
+                              stepwise_ ? &eval_each : nullptr);
 
-    bao_.evaluateSolution(*nb);
+    if (!stepwise_) bao_.evaluateSolution(*nb);
     return nb;
 }
 

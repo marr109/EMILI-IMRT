@@ -115,6 +115,8 @@ variante "sin restricción" ya armable desde CLI (motivo y consecuencias en
 | `prangswap <p>` | `RandomAnglesPerturbation` | BAO | Reemplaza `p` ángulos activos al azar |
 | `pgreedy <D>` | `GreedyAnglesPerturbation` | BAO | Destruye `D` ángulos y reconstruye greedy (Iterated Greedy) |
 | `prangshift <step> <numSteps>` | `AngleShiftMultiPerturbation` | BAO | Desplaza `numSteps` ángulos activos DISTINTOS (sin repetir slot), magnitud aleatoria en `(step, 2·step)` — ver fix de trampa módulo-step en [[project_leslie_localsearch_review]] |
+| `prangshiftmag <numSteps> <count> <m1> ... <m_count>` | `AngleShiftMultiPerturbation` (modo magnitud discreta) | BAO | Como `prangshift`, pero cada ángulo se mueve exactamente ±m grados (m sorteado de la lista, signo aleatorio); mantiene la grilla de 5° si los m son múltiplos de 5 |
+| `prangshiftadaptivemag <maxNumSteps> <stagnationThreshold> <count> <m1> ... <m_count>` | `AdaptiveAngleShiftPerturbation` (modo magnitud discreta) | BAO | Versión adaptativa de `prangshiftmag` |
 | `prandom <k> <max>` | `RandomBeamletPerturbation` | FMO clásico | Reasigna `k` dimlets a U[0, max] |
 
 ## 7. Metaheurísticas — estado real

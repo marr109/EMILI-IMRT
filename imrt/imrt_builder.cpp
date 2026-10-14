@@ -5,6 +5,8 @@
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <string>
+#include <vector>
 
 // ── Token keywords ────────────────────────────────────────────────────────────
 #define PROBLEM_IMRT    "imrt"
@@ -26,6 +28,8 @@
 #define PERT_ANGSWAP    "prangswap"
 #define PERT_ANGSHIFT   "prangshift"
 #define PERT_ANGSHIFT_ADAPTIVE "prangshiftadaptive"
+#define PERT_ANGSHIFT_MAG "prangshiftmag"
+#define PERT_ANGSHIFT_ADAPTIVE_MAG "prangshiftadaptivemag"
 #define ACC_IMPROVE     "aimprove"
 #define ACC_BAO_IMPROVE "baoimprove"
 #define ACC_REJECT_REPEATED "rejectrepeated"
@@ -306,6 +310,41 @@ emili::Neighborhood* ImrtBuilder::buildNeighborhood()
     return neigh;
 }
 
+// Reads "<count> <m1> ... <m_count>" for the discrete-magnitude perturbations.
+// Fails loudly (exit) on count < 1 or any magnitude < 1.
+static std::vector<int> readMagnitudes(TokenManager& tm)
+{
+    int count = tm.getInteger();
+    if (count < 1) {
+        std::cerr << "[IMRT] discrete-magnitude perturbation: count must be >= 1 (got "
+                  << count << ")" << std::endl;
+        exit(-1);
+    }
+    std::vector<int> mags;
+    for (int i = 0; i < count; ++i) {
+        int m = tm.getInteger();
+        if (m < 1) {
+            std::cerr << "[IMRT] discrete-magnitude perturbation: magnitude must be >= 1 (got "
+                      << m << ")" << std::endl;
+            exit(-1);
+        }
+        mags.push_back(m);
+    }
+    return mags;
+}
+
+static void printStepwise(bool sw)
+{
+    if (sw) prs::printTabPlusOne("stepwise", "evaluate after each individual move");
+}
+
+static void printMagnitudes(const std::vector<int>& mags)
+{
+    std::string s;
+    for (size_t i = 0; i < mags.size(); ++i) s += (i ? "," : "") + std::to_string(mags[i]);
+    prs::printTabPlusOne("magnitudes (deg)", s.c_str());
+}
+
 /*---------------------------------------------------------------------------*
  * buildPerturbation
  *---------------------------------------------------------------------------*/
@@ -341,7 +380,10 @@ emili::Perturbation* ImrtBuilder::buildPerturbation()
             prs::printTab("BAO perturbation: multi angle shift (distinct slots)");
             prs::printTabPlusOne("step", step);
             prs::printTabPlusOne("numSteps", numSteps);
-            pert = new emili::imrt::AngleShiftMultiPerturbation(*prob, step, numSteps);
+            bool sw = tm.checkToken("stepwise");
+            printStepwise(sw);
+            pert = new emili::imrt::AngleShiftMultiPerturbation(*prob, step, numSteps,
+                                                                std::vector<int>(), sw);
         }
         else if (tm.checkToken(PERT_ANGSHIFT_ADAPTIVE)) {
             // Sintaxis: prangshiftadaptive <step> <maxNumSteps> <stagnationThreshold>
@@ -359,8 +401,37 @@ emili::Perturbation* ImrtBuilder::buildPerturbation()
             prs::printTabPlusOne("step", step);
             prs::printTabPlusOne("maxNumSteps", maxNumSteps);
             prs::printTabPlusOne("stagnationThreshold", stagnationThreshold);
+            bool sw = tm.checkToken("stepwise");
+            printStepwise(sw);
             pert = new emili::imrt::AdaptiveAngleShiftPerturbation(
-                *prob, step, maxNumSteps, stagnationThreshold);
+                *prob, step, maxNumSteps, stagnationThreshold, std::vector<int>(), sw);
+        }
+        else if (tm.checkToken(PERT_ANGSHIFT_MAG)) {
+            // Sintaxis: prangshiftmag <numSteps> <count> <m1> ... <m_count>
+            // Igual que prangshift pero cada angulo se mueve +-m grados, con m
+            // sorteado de la lista y signo aleatorio (step no se usa).
+            int numSteps = tm.getInteger();
+            std::vector<int> mags = readMagnitudes(tm);
+            prs::printTab("BAO perturbation: multi angle shift, discrete magnitudes");
+            prs::printTabPlusOne("numSteps", numSteps);
+            printMagnitudes(mags);
+            bool sw = tm.checkToken("stepwise");
+            printStepwise(sw);
+            pert = new emili::imrt::AngleShiftMultiPerturbation(*prob, 1, numSteps, mags, sw);
+        }
+        else if (tm.checkToken(PERT_ANGSHIFT_ADAPTIVE_MAG)) {
+            // Sintaxis: prangshiftadaptivemag <maxNumSteps> <stagnationThreshold> <count> <m1> ... <m_count>
+            int maxNumSteps          = tm.getInteger();
+            int stagnationThreshold  = tm.getInteger();
+            std::vector<int> mags = readMagnitudes(tm);
+            prs::printTab("BAO perturbation: adaptive multi angle shift, discrete magnitudes");
+            prs::printTabPlusOne("maxNumSteps", maxNumSteps);
+            prs::printTabPlusOne("stagnationThreshold", stagnationThreshold);
+            printMagnitudes(mags);
+            bool sw = tm.checkToken("stepwise");
+            printStepwise(sw);
+            pert = new emili::imrt::AdaptiveAngleShiftPerturbation(
+                *prob, 1, maxNumSteps, stagnationThreshold, mags, sw);
         }
         prs::decrementTabLevel();
         return pert;

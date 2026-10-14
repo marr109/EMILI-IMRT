@@ -306,15 +306,24 @@ class AngleShiftMultiPerturbation : public emili::Perturbation {
     int         step_;
     int         numSteps_;
 
+    // Modo de magnitud discreta (opcional): si no esta vacio, cada angulo se
+    // mueve +-m grados con m sorteado de esta lista (signo aleatorio) en vez
+    // del rango (step, 2*step) posiciones. Vacio = modo rango (original).
+    std::vector<int> magnitudes_;
+    bool stepwise_;   // opt-in: evaluar tras cada movimiento individual
+
     std::vector<int> degree_order_;
     std::vector<int> degree_rank_;
+    std::vector<int> degree_to_idx_;   // grado (0..359) -> indice de catalogo, -1 si no existe
 
     void buildDegreeOrder();
 
 public:
-    AngleShiftMultiPerturbation(BaoProblem& bao, int step, int numSteps)
+    AngleShiftMultiPerturbation(BaoProblem& bao, int step, int numSteps,
+                                const std::vector<int>& magnitudes = std::vector<int>(),
+                                bool stepwise = false)
         : emili::Perturbation(), bao_(bao), n_angles_(bao.nAngles())
-        , step_(step), numSteps_(numSteps) {}
+        , step_(step), numSteps_(numSteps), magnitudes_(magnitudes), stepwise_(stepwise) {}
 
     virtual emili::Solution* perturb(emili::Solution* solution) override;
 };
@@ -345,8 +354,12 @@ class AdaptiveAngleShiftPerturbation : public emili::Perturbation {
     int         maxNumSteps_;
     int         stagnationThreshold_;
 
+    std::vector<int> magnitudes_;   // ver AngleShiftMultiPerturbation (vacio = modo rango)
+    bool stepwise_;
+
     std::vector<int> degree_order_;
     std::vector<int> degree_rank_;
+    std::vector<int> degree_to_idx_;
 
     double last_objective_;
     int    stagnation_count_;
@@ -356,10 +369,13 @@ class AdaptiveAngleShiftPerturbation : public emili::Perturbation {
 
 public:
     AdaptiveAngleShiftPerturbation(BaoProblem& bao, int step,
-                                    int maxNumSteps, int stagnationThreshold)
+                                    int maxNumSteps, int stagnationThreshold,
+                                    const std::vector<int>& magnitudes = std::vector<int>(),
+                                    bool stepwise = false)
         : emili::Perturbation(), bao_(bao), n_angles_(bao.nAngles())
         , step_(step), maxNumSteps_(maxNumSteps)
         , stagnationThreshold_(stagnationThreshold)
+        , magnitudes_(magnitudes), stepwise_(stepwise)
         , last_objective_(1e30), stagnation_count_(0), level_(0) {}
 
     virtual emili::Solution* perturb(emili::Solution* solution) override;
