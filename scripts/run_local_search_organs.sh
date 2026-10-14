@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Usage: scripts/run_local_search_organs.sh <step> <strategy: first|best> \
-#            <catalog: restricted|unrestricted> <order: fixed|circular|rand>
+#            <catalog: restricted|unrestricted> <order: fixed|circular|rand> [seed_from=1] [seed_to=15]
 # Pure local search (no ILS), 15 seeds, K=4, with the PER-ORGAN FMO model.
 # Output (same layout as experiments/old/local_search):
 #   experiments/new/local_search/nangshift<step>/<catalog>[-shift-circular|-shift-rand]/data/<strategy>/seedNN/
@@ -13,6 +13,7 @@ set -euo pipefail
 #   EMILI_DMIN=68  EMILI_W_PTV_OVER=0.5  EMILI_EXCLUDE_OVERLAP=1
 
 STEP="$1"; STRATEGY="$2"; CATALOG="$3"; ORDER="$4"
+SEED_FROM="${5:-1}"; SEED_TO="${6:-15}"
 
 export EMILI_FMO_MODEL="${EMILI_FMO_MODEL:-organs}"
 export EMILI_W_OVER_ORGANS="${EMILI_W_OVER_ORGANS:-0.5,0.8}"
@@ -37,7 +38,8 @@ OUTBASE="${BASE}/data/${STRATEGY}"
 LOG="${BASE}/${STRATEGY}_batch.log"
 mkdir -p "$OUTBASE"
 
-for seed in $(seq -w 1 15); do
+for n in $(seq "$SEED_FROM" "$SEED_TO"); do
+  seed=$(printf '%02d' "$n")
   seed_dir="${OUTBASE}/seed${seed}"
   traj="${seed_dir}/trajectory.csv"
   run_log="${seed_dir}/run.log"
@@ -51,7 +53,7 @@ for seed in $(seq -w 1 15); do
   echo "[$(date '+%H:%M:%S')] RUN seed${seed} (step=${STEP} ${STRATEGY} ${CATALOG} ${ORDER})" | tee -a "$LOG"
   ./build/emili instances/CERR_Prostate baoimrt 4 csv "$traj" \
     "$STRATEGY" irandomk $CATALOG_TOKEN locmin nangshift "$STEP" $ORDER_TOKEN \
-    rnds "$((10#$seed))" > "$run_log" 2>&1 || true
+    rnds "$n" > "$run_log" 2>&1 || true
 
   if grep -q "Found solution" "$run_log" 2>/dev/null; then
     echo "[$(date '+%H:%M:%S')] DONE seed${seed}" | tee -a "$LOG"
