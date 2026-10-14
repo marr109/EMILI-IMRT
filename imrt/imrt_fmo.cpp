@@ -6,6 +6,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 
@@ -134,13 +135,69 @@ void ImrtFmoSolver::initAmpl()
         std::cout << "  gurobi_options: " << gurobi_opts << "\n";
     }
 
-    ampl_->read(repoPath("ampl_gurobi/fmo.mod"));
+    // Model selection: EMILI_FMO_MODEL unset/"baseline" -> fmo.mod (single
+    // w_over); "organs" -> fmo_organs.mod (one overdose weight per OAR).
+    const std::string model_name = envOr("EMILI_FMO_MODEL", "baseline");
+    if (model_name != "baseline" && model_name != "organs")
+        throw std::runtime_error("EMILI_FMO_MODEL must be 'baseline' or 'organs', got '"
+                                 + model_name + "'");
+    const bool per_organ = (model_name == "organs");
+    if (!per_organ) std::cout << "  fmo_model: baseline (w_over=" << source_.w_over() << ")\n";
+    ampl_->read(repoPath(per_organ ? "ampl_gurobi/fmo_organs.mod"
+                                   : "ampl_gurobi/fmo.mod"));
 
     ampl_->getParameter("n_ptv").set(n_ptv_);
     ampl_->getParameter("n_oar").set(n_oar_);
     ampl_->getParameter("max_intensity").set(source_.max_intensity());
     ampl_->getParameter("w_under").set(source_.w_under());
-    ampl_->getParameter("w_over").set(source_.w_over());
+    if (!per_organ) {
+        ampl_->getParameter("w_over").set(source_.w_over());
+    } else {
+        const size_t n_org = oar_bounds_.size();
+        if (n_org == 0)
+            throw std::runtime_error("EMILI_FMO_MODEL=organs requires at least one OAR");
+
+        // Weights: comma-separated, one per organ in oar_bounds_ order.
+        std::vector<double> w_organ;
+        const std::string w_str = envOr("EMILI_W_OVER_ORGANS", "");
+        if (w_str.empty()) {
+            w_organ.assign(n_org, source_.w_over());
+        } else {
+            std::stringstream ss(w_str);
+            std::string tok;
+            while (std::getline(ss, tok, ',')) {
+                try {
+                    size_t pos = 0;
+                    w_organ.push_back(std::stod(tok, &pos));
+                    if (tok.find_first_not_of(" \t", pos) != std::string::npos)
+                        throw std::invalid_argument(tok);
+                } catch (const std::exception&) {
+                    throw std::runtime_error("EMILI_W_OVER_ORGANS: invalid number '" + tok + "'");
+                }
+            }
+        }
+        if (w_organ.size() != n_org)
+            throw std::runtime_error("EMILI_W_OVER_ORGANS has " + std::to_string(w_organ.size())
+                + " values but there are " + std::to_string(n_org) + " OAR organs");
+
+        std::vector<double> oar_organ(n_oar_, 0.0);
+        for (size_t oi = 0; oi < n_org; ++oi)
+            for (int r = oar_bounds_[oi].row_off;
+                 r < oar_bounds_[oi].row_off + oar_bounds_[oi].n_boxets; ++r)
+                oar_organ[r] = (double)oi;
+
+        const bool normalize = (envOr("EMILI_FMO_NORMALIZE", "0") == "1");
+        ampl_->getParameter("n_organs").set((int)n_org);
+        ampl_->getParameter("w_over_organ").setValues(ampl::Args(w_organ.data()), w_organ.size());
+        if (n_oar_ > 0)
+            ampl_->getParameter("oar_organ").setValues(ampl::Args(oar_organ.data()), oar_organ.size());
+        ampl_->getParameter("normalize").set(normalize ? 1 : 0);
+
+        std::cout << "  fmo_model: organs (normalize=" << (normalize ? 1 : 0) << ")\n";
+        for (size_t oi = 0; oi < n_org; ++oi)
+            std::cout << "    w_over_organ[" << oar_bounds_[oi].name << "]=" << w_organ[oi] << "\n";
+        std::cout.flush();
+    }
     ampl_->getParameter("w_ptv_over").set(source_.w_ptv_over());
 
     // dmin/dmax/dmax_ptv are indexed by PTV_B/OAR_B := 0..n-1, the same

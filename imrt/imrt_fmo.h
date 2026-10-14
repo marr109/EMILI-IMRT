@@ -29,6 +29,12 @@ namespace imrt {
  * The QP is built at each solve() call using only the K active angles'
  * beamlets (K x per_angle variables instead of n_candidates x per_angle).
  *
+ * Optional per-organ model: setting EMILI_FMO_MODEL=organs loads
+ * ampl_gurobi/fmo_organs.mod instead (one overdose weight per OAR organ, from
+ * EMILI_W_OVER_ORGANS, comma-separated in oar_bounds_ order; defaults to
+ * w_over for every organ; EMILI_FMO_NORMALIZE=1 divides each term by its
+ * voxel count). Unset or "baseline" keeps fmo.mod and the default behavior.
+ *
  * Depends on IFmoDataSource rather than a concrete instance format, so this
  * solver stays agnostic to on-disk layout details such as CerrFmoSource's
  * variable beamlet count per angle.

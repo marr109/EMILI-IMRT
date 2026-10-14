@@ -40,7 +40,11 @@ CerrFmoSource::CerrFmoSource(const std::string& dir)
     // Clinical Dmin/Dmax placeholders -- authorized for pipeline validation
     // only (no instance_config.txt / CERR patient plan documents the real
     // prescription for this dataset).
-    const double dmin_ptvhd = 65.0, dmin_ptvld = 65.0;
+    // EMILI_DMIN overrides the PTV prescription (Gy) for both PTVs; dmax_ptv
+    // follows as 1.07 * dmin. Objectives are not comparable across values.
+    double dmin_rx = 65.0;
+    if (const char* env_d = std::getenv("EMILI_DMIN")) dmin_rx = std::atof(env_d);
+    const double dmin_ptvhd = dmin_rx, dmin_ptvld = dmin_rx;
     const double dmax_bladder = 50.0, dmax_rectum = 50.0;
     max_intensity_ = 15000.0;
     w_under_       = 1.0;
@@ -80,12 +84,23 @@ CerrFmoSource::CerrFmoSource(const std::string& dir)
         ptv_meta_.push_back(std::move(m));
     }
 
+    // EMILI_EXCLUDE_OVERLAP=1 -> OAR minus PTV: voxels that belong to both a PTV
+    // and an OAR count only as PTV. Without it the same voxel must satisfy
+    // dose >= dmin (PTV) and dose <= dmax (OAR), which is contradictory.
+    // Changes the problem: objectives are not comparable with runs without it.
+    std::unordered_set<int> ptv_voxel_ids;
+    const char* env_ov = std::getenv("EMILI_EXCLUDE_OVERLAP");
+    const bool exclude_overlap = env_ov && std::string(env_ov) == "1";
+    if (exclude_overlap)
+        for (const auto& pm : ptv_meta_)
+            for (const auto& kv : pm.voxel_to_local) ptv_voxel_ids.insert(kv.first);
+
     off = 0;
     for (const char* name : kOarNames) {
         OrganMeta m;
         m.name = name;
         m.row_off = off;
-        loadVoxelList(name, m);
+        loadVoxelList(name, m, exclude_overlap ? &ptv_voxel_ids : nullptr);
         off += m.n_boxets;
 
         double dmax = (m.name == "BLADDER") ? dmax_bladder : dmax_rectum;
@@ -124,7 +139,8 @@ void CerrFmoSource::loadBeamletIndex()
         beamlet_range_[std::get<0>(row)] = {std::get<1>(row), std::get<2>(row)};
 }
 
-void CerrFmoSource::loadVoxelList(const std::string& organ_name, OrganMeta& out) const
+void CerrFmoSource::loadVoxelList(const std::string& organ_name, OrganMeta& out,
+                                  const std::unordered_set<int>* skip) const
 {
     std::ifstream f(dir_ + organ_name + ".txt");
     std::string line;
@@ -134,6 +150,7 @@ void CerrFmoSource::loadVoxelList(const std::string& organ_name, OrganMeta& out)
         std::istringstream iss(line);
         int voxel_id;
         if (!(iss >> voxel_id)) continue;
+        if (skip && skip->count(voxel_id)) continue;
         out.voxel_to_local[voxel_id] = local++;
     }
     out.n_boxets = local;

@@ -4,6 +4,7 @@
 #include "imrt_fmo_source.h"
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <utility>
 
@@ -80,7 +81,9 @@ private:
     mutable std::vector<std::vector<std::pair<int,double>>> oar_dose_;
 
     void loadBeamletIndex();
-    void loadVoxelList(const std::string& organ_name, OrganMeta& out) const;
+    // skip: voxel ids to leave out (OAR voxels that also belong to the PTV).
+    void loadVoxelList(const std::string& organ_name, OrganMeta& out,
+                       const std::unordered_set<int>* skip = nullptr) const;
     void ensureAngleLoaded(int angle_idx) const;
     int  angleForDimlet(int global_dimlet_id) const;
 };
