@@ -17,6 +17,7 @@ the model itself does not optimize gEUD.
 """
 import argparse
 import csv
+import json
 import os
 import re
 import sys
@@ -93,12 +94,22 @@ def main():
     if not runs:
         sys.exit(f"no run.log with final angles under {args.root}")
     inst = CerrInstance()
+    # Plan metrics are cached on disk next to the output so a crash (e.g. an expired
+    # solver license lease) can resume without re-solving finished plans. The cache
+    # is only valid for the same model settings, so delete it if they change.
+    cache_path = args.out + ".cache.json"
     cache = {}
+    if os.path.exists(cache_path):
+        with open(cache_path) as f:
+            cache = {tuple(int(a) for a in k.split("-")): v for k, v in json.load(f).items()}
+        print(f"resuming from {cache_path}: {len(cache)} plans already solved")
     rows = []
     for i, (rel, angles) in enumerate(runs, 1):
         key = tuple(angles)
         if key not in cache:
             cache[key] = metrics(inst, angles, w_organs, args.geud)
+            with open(cache_path, "w") as f:
+                json.dump({"-".join(map(str, k)): v for k, v in cache.items()}, f)
         rows.append({"run": rel, "angles": "-".join(map(str, angles)), **cache[key]})
         print(f"[{i}/{len(runs)}] {rel} {angles}")
     cols = list(dict.fromkeys(c for r in rows for c in r))
