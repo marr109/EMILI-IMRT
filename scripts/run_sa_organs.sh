@@ -14,7 +14,7 @@ set -euo pipefail
 #
 # Model settings (override via environment):
 #   EMILI_FMO_MODEL=organs  EMILI_W_OVER_ORGANS=0.5,0.8 (bladder,rectum)
-#   EMILI_DMIN=68  EMILI_W_PTV_OVER=0.5  EMILI_EXCLUDE_OVERLAP=1
+#   EMILI_DMIN=68  EMILI_W_PTV_OVER=0.5  EMILI_EXCLUDE_OVERLAP=1  EMILI_MAX_INTENSITY=100
 # Run-control overrides (for smoke tests):
 #   OUT_ROOT (default experiments/new)  BUDGET_SECONDS (default 1080; smoke tests only)
 #   T_START/T_END/BETA  PY
@@ -27,6 +27,7 @@ export EMILI_W_OVER_ORGANS="${EMILI_W_OVER_ORGANS:-0.5,0.8}"
 export EMILI_DMIN="${EMILI_DMIN:-68}"
 export EMILI_W_PTV_OVER="${EMILI_W_PTV_OVER:-0.5}"
 export EMILI_EXCLUDE_OVERLAP="${EMILI_EXCLUDE_OVERLAP:-1}"
+export EMILI_MAX_INTENSITY="${EMILI_MAX_INTENSITY:-100}"
 
 OUT_ROOT="${OUT_ROOT:-experiments/new}"
 BUDGET="${BUDGET_SECONDS:-1080}"

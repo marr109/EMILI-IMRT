@@ -27,7 +27,7 @@ OAR_ORGANS = ["BLADDER", "RECTUM"]
 DMIN = float(os.environ.get("EMILI_DMIN", 65.0))      # PTV prescription (Gy); default = loader placeholder
 DMAX_OAR = 50.0
 DMAX_PTV = 1.07 * DMIN
-MAX_INTENSITY = 15000.0
+MAX_INTENSITY = float(os.environ.get("EMILI_MAX_INTENSITY", 15000.0))   # per-beamlet cap; default = original placeholder
 EXCLUDE_OVERLAP = os.environ.get("EMILI_EXCLUDE_OVERLAP", "0") == "1"   # OAR minus PTV
 W_UNDER = 1.0
 W_PTV_OVER = float(os.environ.get("EMILI_W_PTV_OVER", 0.0))

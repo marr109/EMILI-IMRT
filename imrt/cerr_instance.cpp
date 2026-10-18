@@ -46,7 +46,12 @@ CerrFmoSource::CerrFmoSource(const std::string& dir)
     if (const char* env_d = std::getenv("EMILI_DMIN")) dmin_rx = std::atof(env_d);
     const double dmin_ptvhd = dmin_rx, dmin_ptvld = dmin_rx;
     const double dmax_bladder = 50.0, dmax_rectum = 50.0;
+    // EMILI_MAX_INTENSITY overrides the per-beamlet intensity cap. The default (15000) is the
+    // original placeholder and never binds; a clinically meaningful cap is set per experiment.
     max_intensity_ = 15000.0;
+    if (const char* env_mi = std::getenv("EMILI_MAX_INTENSITY")) {
+        max_intensity_ = std::atof(env_mi);
+    }
     w_under_       = 1.0;
     w_over_        = 0.5;
     // La penalizacion de sobredosis en PTV esta DESACTIVADA por defecto. No es

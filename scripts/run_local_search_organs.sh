@@ -10,7 +10,7 @@ set -euo pipefail
 #
 # Model settings (override via environment):
 #   EMILI_FMO_MODEL=organs  EMILI_W_OVER_ORGANS=0.5,0.8 (bladder,rectum)
-#   EMILI_DMIN=68  EMILI_W_PTV_OVER=0.5  EMILI_EXCLUDE_OVERLAP=1
+#   EMILI_DMIN=68  EMILI_W_PTV_OVER=0.5  EMILI_EXCLUDE_OVERLAP=1  EMILI_MAX_INTENSITY=100
 
 STEP="$1"; STRATEGY="$2"; CATALOG="$3"; ORDER="$4"
 SEED_FROM="${5:-1}"; SEED_TO="${6:-15}"
@@ -20,6 +20,7 @@ export EMILI_W_OVER_ORGANS="${EMILI_W_OVER_ORGANS:-0.5,0.8}"
 export EMILI_DMIN="${EMILI_DMIN:-68}"
 export EMILI_W_PTV_OVER="${EMILI_W_PTV_OVER:-0.5}"
 export EMILI_EXCLUDE_OVERLAP="${EMILI_EXCLUDE_OVERLAP:-1}"
+export EMILI_MAX_INTENSITY="${EMILI_MAX_INTENSITY:-100}"
 
 case "$CATALOG" in
   unrestricted) CATALOG_TOKEN="unrestricted" ;;
