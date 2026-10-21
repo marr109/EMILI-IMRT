@@ -15,3 +15,19 @@ Not wired yet: `ImrtFmoSolver` (C++) does not pass `oar_organ` / `w_over_organ`.
 
 Loader options (environment variables, `cerr_fmo_ampl.py`):
 `EMILI_DMIN`, `EMILI_W_PTV_OVER`, `EMILI_EXCLUDE_OVERLAP=1` (OAR minus PTV).
+
+## Local (macOS) Python environment
+
+Persistent venv outside the project and outside /tmp (macOS cleans old files in /tmp and broke the previous one):
+`~/.venvs/emili-ampl` (numpy, scipy, matplotlib, amplpy, ampl_module_base, ampl_module_gurobi).
+
+```bash
+~/.venvs/emili-ampl/bin/python dosimetry_batch.py <experiments_dir> --out <csv> --geud
+~/.venvs/emili-ampl/bin/python ../scripts/analyze_new_experiments.py
+```
+
+The AMPL course license uses short-term leases. If a run fails with "Short term lease expired", renew it:
+
+```bash
+cd ~/.venvs/emili-ampl/lib/python3.14/site-packages/ampl_module_base/bin && ./amplkey renew
+```
