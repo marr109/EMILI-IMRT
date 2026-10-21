@@ -323,7 +323,6 @@ emili_imrt/
 │   ├── imrt_bao.h/.cpp        # BAO: angle neighborhoods, perturbations
 │   └── imrt_builder.h/.cpp    # CLI builder for IMRT tokens
 │
-├── grámaticas/                # XML grammar definitions per algorithm
 ├── irace_*/                   # irace tuning scenarios
 ├── plot_bao_results.py        # Convergence & DVH visualization
 ├── run_comparison.sh          # Multi-algorithm benchmark runner
