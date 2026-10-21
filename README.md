@@ -165,6 +165,27 @@ The binary is `build/emili`.
 
 ---
 
+## Per-organ FMO model and experiment variables
+
+The default FMO model is `ampl_gurobi/fmo.mod` (one overdose weight for all organs at risk). The per-organ model
+`ampl_gurobi/fmo_organs.mod` gives each organ its own weight. It is selected at run time, without recompiling:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `EMILI_FMO_MODEL` | `baseline` | `baseline` reads `fmo.mod`; `organs` reads `fmo_organs.mod` |
+| `EMILI_W_OVER_ORGANS` | `w_over` for every organ | Overdose weights, comma separated, in the order of the organs at risk (e.g. `0.5,0.8`) |
+| `EMILI_FMO_NORMALIZE` | `0` | `1` divides each term by the number of voxels of its structure |
+| `EMILI_DMIN` | `65` | PTV prescription in Gy (the PTV ceiling is 1.07 x this value) |
+| `EMILI_W_PTV_OVER` | `0` | Weight of the PTV hot-spot penalty |
+| `EMILI_EXCLUDE_OVERLAP` | `0` | `1` counts voxels shared by a PTV and an organ only as PTV |
+| `EMILI_MAX_INTENSITY` | `15000` | Upper bound of each beamlet intensity |
+| `EMILI_GUROBI_OPTIONS` | empty | Passed to the solver, e.g. `threads=1` |
+| `EMILI_AMPL_BIN_DIR`, `EMILI_GUROBI_BIN` | repo `.venv` path | AMPL and solver binaries (needed on Linux) |
+
+Defaults reproduce the original behaviour. Commands, conditions and the neighborhood and perturbation tokens used
+in the experiments are in `docs/experimentos-comandos.md`. The solver license is not part of the repository
+(`*.lic` is ignored); see `docs/ampl-gurobi-integration.md` and `ampl_gurobi/README.md`.
+
 ## Hyperparameter Tuning (irace)
 
 The `irace_*/` directories contain [irace](https://iridia.ulb.ac.be/irace/) scenarios for automatic algorithm configuration.
