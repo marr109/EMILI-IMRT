@@ -1,11 +1,14 @@
 """Validate the CERR pipeline against a logged seed.
 Evaluates every distinct angle set in the seed trajectory with EQUAL OAR weights
 (0.5 / 0.5, the seed's w_over) and compares with the logged objective."""
-import csv, time, sys
+import csv, os, time, sys
 from cerr_fmo_ampl import CerrInstance
 from solvers import build_and_solve
 
-SEED = "/Users/marrojasr/Documents/code/emili_imrt/experiments/local_search/nangshift5/restricted/data/first/seed01/trajectory.csv"
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Usage: python validate_seed.py [path/to/trajectory.csv]  (default: a local-search seed under experiments/)
+SEED = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
+    REPO, "experiments", "local_search", "nangshift5", "restricted", "data", "first", "seed01", "trajectory.csv")
 
 inst = CerrInstance()
 rows = list(csv.DictReader(open(SEED)))
