@@ -182,9 +182,8 @@ The default FMO model is `ampl_gurobi/fmo.mod` (one overdose weight for all orga
 | `EMILI_GUROBI_OPTIONS` | empty | Passed to the solver, e.g. `threads=1` |
 | `EMILI_AMPL_BIN_DIR`, `EMILI_GUROBI_BIN` | repo `.venv` path | AMPL and solver binaries (needed on Linux) |
 
-Defaults reproduce the original behaviour. Commands, conditions and the neighborhood and perturbation tokens used
-in the experiments are in `docs/experimentos-comandos.md`. The solver license is not part of the repository
-(`*.lic` is ignored); see `docs/ampl-gurobi-integration.md` and `ampl_gurobi/README.md`.
+Defaults reproduce the original behaviour. The solver license is not part of the repository (`*.lic` is ignored);
+see `docs/setup-calafate.md` for the Linux server setup and `ampl_gurobi/README.md` for the local environment.
 
 ## Hyperparameter Tuning (irace)
 
