@@ -118,3 +118,17 @@ ampl_gurobi/.venv/
 # raw clinical/course data dumps, not project artifacts
 archivos_profe/
 x/
+
+# Raw experiment results are kept locally, not versioned. Commands and analysis notes
+# (experiments/new/*/COMMANDS.md, experiments/new/ANALYSIS_NOTES.md) stay tracked.
+/experiments/old/
+/experiments/archive_*/
+/experiments/new/*/nangshift*/
+/experiments/new/*/comparisons/
+/experiments/new/*/plans_dosimetry.csv*
+/experiments/new/vns/
+/experiments/new/comparisons/
+/ampl_gurobi/fi_cerr_results*.json
+/ampl_gurobi/pareto_*.json
+/ampl_gurobi/run_all*.sh
+__pycache__/
